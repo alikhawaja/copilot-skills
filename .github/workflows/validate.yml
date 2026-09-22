@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  validate:
+  validate-manifests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,3 +34,47 @@ jobs:
               throw "Possible credential detected: $($manifest.FullName)"
             }
           }
+
+  test-powershell-installer:
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install skill
+        shell: pwsh
+        env:
+          COPILOT_SKILLS_HOME: ${{ runner.temp }}/copilot-skills
+        run: |
+          ./install.ps1 -Skill dev-machine-setup
+          $manifest = Join-Path $env:COPILOT_SKILLS_HOME 'dev-machine-setup/SKILL.md'
+          if (-not (Test-Path -LiteralPath $manifest)) {
+            throw 'Installed manifest not found.'
+          }
+      - name: Reinstall skill atomically
+        shell: pwsh
+        env:
+          COPILOT_SKILLS_HOME: ${{ runner.temp }}/copilot-skills
+        run: ./install.ps1 -Skill dev-machine-setup
+
+  test-shell-installer:
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install and update skill
+        shell: bash
+        env:
+          COPILOT_SKILLS_HOME: ${{ runner.temp }}/copilot-skills
+        run: |
+          ./install.sh dev-machine-setup
+          ./install.sh dev-machine-setup
+          test -f "$COPILOT_SKILLS_HOME/dev-machine-setup/SKILL.md"

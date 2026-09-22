@@ -1,68 +1,137 @@
 ---
 name: dev-machine-setup
 description: >-
-  Set up or repair a Windows developer machine with VS Code, Git and GitHub
-  SSH, Python 3.14 and 3.13, uv, Ruff, Pyright, pre-commit-compatible tooling,
-  PowerShell 7, Azure CLI and Azure PowerShell, Windows Terminal, Hyper-V,
-  WSL 2 with the latest Ubuntu LTS, and Docker Desktop. Use when the user asks
-  to provision, bootstrap, configure, verify, or repair a Windows dev machine.
+  Set up or repair a Windows, macOS, or Linux developer machine with VS Code,
+  Git and GitHub SSH, Python 3.14 and 3.13, uv, Ruff, Pyright,
+  pre-commit-compatible tooling, PowerShell 7, Azure CLI and Azure PowerShell,
+  and Docker. On Windows, also configures Windows Terminal, Hyper-V, WSL 2, and
+  the latest Ubuntu LTS. Use when the user asks to provision, bootstrap,
+  configure, verify, or repair a development machine.
 ---
 
-# Windows developer machine setup
+# Cross-platform developer machine setup
 
 Provision the machine incrementally, preserve existing configuration, and verify
-every installed surface. Expect administrator prompts and one reboot for
-virtualization features. Never claim completion before post-reboot validation.
+every installed surface. Produce the same development capabilities on Windows,
+macOS, and Linux while using each platform's native conventions.
 
 ## Safety and interaction rules
 
+- Detect the operating system, architecture, package manager, shell, and
+  privilege model before planning installations. Never run commands for another
+  platform.
 - Ask for the Git user name, Git email, and preferred source root if not given.
-  Default the source root to `C:\Users\<user>\git`.
-- Before changing a tool, inventory its current version and persistent `PATH`.
+  Default to `$HOME\git` on Windows and `$HOME/git` on macOS/Linux.
+- Inventory existing versions and configuration before changing them. Upgrade
+  in place when possible; do not install duplicate package-manager variants.
+- Explain every elevation prompt immediately before invoking it. Batch package
+  operations when the package manager supports it.
 - Never overwrite an existing SSH private key or request a passphrase in chat.
-  Use an interactive terminal for `ssh-keygen` and `ssh-add`.
-- Explain each UAC prompt immediately before invoking it.
-- Do not disable TLS validation, execution policy, antivirus, application
-  control, or administrator policy.
-- If `files.pythonhosted.org` is blocked, use approved Winget/npm alternatives.
-  Do not evade the block. Ask for an approved Python package mirror if the user
-  specifically requires packages unavailable elsewhere.
-- Use exact Winget IDs, accept source/package agreements, and disable
-  interactive Winget prompts. Treat "already installed/no upgrade available" as
-  success after independently checking the executable.
-- Rebuild `$env:Path` from persistent values before verification because the
-  current shell does not automatically receive installer `PATH` changes:
+  Use an interactive terminal for `ssh-keygen`, `ssh-add`, GitHub device login,
+  and operating-system credential prompts.
+- Do not disable TLS validation, execution policy, Gatekeeper, SELinux,
+  antivirus, application control, or administrator policy.
+- Do not pipe a remote script directly into a shell. Download it over HTTPS,
+  inspect its origin/content, then execute the local file.
+- Respect managed-device network policy. If `files.pythonhosted.org` or another
+  package host is blocked, use approved system packages or ask for the
+  organization's approved mirror. Never evade a block.
+- Preserve unrelated Git, SSH, shell, Docker, and editor configuration. Add or
+  update only the entries needed for this setup.
+- Treat installer success as provisional until the actual executable and
+  expected version are verified from a fresh shell.
+
+## 1. Detect the platform
+
+### Windows
 
 ```powershell
-$env:Path = [Environment]::GetEnvironmentVariable('Path', 'User') + ';' +
-            [Environment]::GetEnvironmentVariable('Path', 'Machine')
-```
-
-## 1. Inventory
-
-Check Winget and existing tools:
-
-```powershell
+$platform = 'windows'
+$architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+Get-CimInstance Win32_OperatingSystem |
+  Select-Object Caption, Version, BuildNumber, OSArchitecture
 winget --version
-code --version
-py --list-paths
-python --version
-uv --version
-git --version
-gh --version
-git lfs version
-pwsh --version
-az version
-wsl --status
-docker --version
 ```
 
-Confirm the source root exists, creating it only when requested. Inspect Git
-configuration and `~\.ssh` before making changes.
+Prefer Winget. Determine whether the host is Home, Pro, Enterprise, or Education
+before enabling Hyper-V.
 
-## 2. Core editor and Python
+### macOS
 
-Install or upgrade VS Code:
+```bash
+platform=macos
+sw_vers
+uname -m
+xcode-select -p 2>/dev/null || true
+command -v brew || true
+```
+
+Install Apple Command Line Tools interactively if absent:
+
+```bash
+xcode-select --install
+```
+
+Prefer Homebrew. If Homebrew is missing, ask for approval before installing it
+from the official Homebrew source. On Apple Silicon, ensure `/opt/homebrew/bin`
+is initialized through `brew shellenv`; on Intel, use `/usr/local/bin`.
+
+### Linux
+
+```bash
+platform=linux
+uname -a
+cat /etc/os-release
+uname -m
+command -v apt-get || command -v dnf || command -v pacman || command -v zypper
+```
+
+Support these families as first-class paths:
+
+| Family | Detection | Package manager |
+|---|---|---|
+| Debian/Ubuntu | `ID=debian` or `ID=ubuntu` | `apt-get` |
+| Fedora/RHEL-compatible | `ID=fedora`, `rhel`, `rocky`, `almalinux` | `dnf` |
+| Arch-compatible | `ID=arch`, `manjaro` | `pacman` |
+| openSUSE | `ID=opensuse-*`, `sles` | `zypper` |
+
+For an unsupported distribution, do not guess repository URLs. Use a supported
+universal installer or consult the vendor's official instructions for the exact
+distribution and version.
+
+## 2. Inventory
+
+Check available tools without failing the whole inventory when one is absent:
+
+```text
+VS Code:          code --version
+Python:           python3 --version; python --version
+Python manager:   uv --version
+Python tools:     ruff --version; pyright --version; prek --version
+Git:              git --version; git lfs version
+GitHub CLI:       gh --version; gh auth status
+SSH:              ssh -V; ssh-add -l
+PowerShell:       pwsh --version
+Azure:            az version
+Azure PowerShell: pwsh -NoProfile -Command "Get-Module Az -ListAvailable"
+Docker:           docker version
+```
+
+On Windows, also check:
+
+```powershell
+py --list-paths
+wt --version
+wsl --status
+wsl --list --verbose
+```
+
+Confirm or create the source root only after the user agrees. Inspect global Git
+configuration and the SSH directory before changing either.
+
+## 3. Install the editor
+
+### Windows
 
 ```powershell
 winget install --exact --id Microsoft.VisualStudioCode --scope user `
@@ -70,135 +139,204 @@ winget install --exact --id Microsoft.VisualStudioCode --scope user `
   --disable-interactivity --silent
 ```
 
-Install Python 3.14 and 3.13 side-by-side. Do not pass `--scope user` to these
-Winget IDs because it can filter out the otherwise valid installer. Instead,
-use Python install properties:
+### macOS
+
+```bash
+brew install --cask visual-studio-code
+```
+
+### Linux
+
+Use Microsoft's official repository/package for the detected distribution.
+
+For Debian/Ubuntu, configure Microsoft's signed APT repository rather than
+downloading an untracked `.deb`. For Fedora/RHEL-compatible systems, configure
+the signed Microsoft RPM repository. On Arch-compatible systems, ask whether
+the user accepts the community-maintained `visual-studio-code-bin` AUR package;
+otherwise use Microsoft's official archive under `/opt` with a managed symlink.
+
+Never silently substitute Code OSS when the user requested Microsoft VS Code,
+because extension availability and telemetry behavior differ.
+
+### Shared extensions
+
+After `code` resolves in a fresh shell:
+
+```bash
+code --install-extension ms-python.python
+code --install-extension ms-python.vscode-pylance
+code --install-extension charliermarsh.ruff
+code --install-extension GitHub.vscode-pull-request-github
+code --install-extension ms-vscode.vscode-node-azure-pack
+```
+
+Install extensions one at a time and verify with
+`code --list-extensions --show-versions`. Do not force-install
+`GitHub.copilot` when Copilot Chat is built into the current VS Code release;
+forcing it can attempt to downgrade a built-in extension.
+
+## 4. Install uv, Python, and Python tools
+
+Use uv to provide consistent Python versions on all platforms:
+
+```bash
+uv python install 3.14 3.13
+uv python list
+```
+
+This avoids relying on the operating system's Python release cadence. Never
+replace or unlink the system Python used by macOS or Linux package management.
+Use `uv run`, project virtual environments, or explicit `uv python` executables.
+
+### Install uv on Windows
 
 ```powershell
-$pyArgs = 'InstallAllUsers=0 PrependPath=1 Include_launcher=1 Include_test=0 Include_doc=0 Include_tcltk=1 Include_pip=1 Shortcuts=0 SimpleInstall=1'
-
-winget install --exact --id Python.Python.3.14 `
-  --accept-package-agreements --accept-source-agreements `
-  --disable-interactivity --silent --override $pyArgs
-
-winget install --exact --id Python.Python.3.13 `
-  --accept-package-agreements --accept-source-agreements `
-  --disable-interactivity --silent --override $pyArgs
-
 winget install --exact --id astral-sh.uv `
   --accept-package-agreements --accept-source-agreements `
   --disable-interactivity --silent
 ```
 
-Python 3.14 should remain the launcher default, while 3.13 provides compatibility
-for dependencies that do not yet support 3.14.
-
-Install VS Code extensions one at a time:
+If the user explicitly wants Python registered with the Windows `py` launcher,
+also install the official side-by-side packages:
 
 ```powershell
-$code = Join-Path $env:LOCALAPPDATA 'Programs\Microsoft VS Code\bin\code.cmd'
-$extensions = @(
-  'ms-python.python',
-  'ms-python.vscode-pylance',
-  'charliermarsh.ruff',
-  'GitHub.vscode-pull-request-github',
-  'ms-vscode.vscode-node-azure-pack'
-)
-$extensions | ForEach-Object { & $code --install-extension $_ }
+$pyArgs = 'InstallAllUsers=0 PrependPath=1 Include_launcher=1 Include_test=0 Include_doc=0 Include_tcltk=1 Include_pip=1 Shortcuts=0 SimpleInstall=1'
+winget install --exact --id Python.Python.3.14 `
+  --accept-package-agreements --accept-source-agreements `
+  --disable-interactivity --silent --override $pyArgs
+winget install --exact --id Python.Python.3.13 `
+  --accept-package-agreements --accept-source-agreements `
+  --disable-interactivity --silent --override $pyArgs
 ```
 
-Do not force-install `GitHub.copilot` when Copilot Chat is built into the current
-VS Code release; a forced Marketplace install can attempt to downgrade the
-built-in chat extension.
+Do not pass `--scope user` to these Python Winget packages; that can filter out
+their otherwise valid installers.
 
-Try Python tools through uv first:
+### Install uv on macOS
 
-```powershell
+```bash
+brew install uv
+```
+
+### Install uv on Linux
+
+Use a distribution package if it provides a current uv release. Otherwise,
+download the official installer for review:
+
+```bash
+tmp="$(mktemp)"
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://astral.sh/uv/install.sh -o "$tmp"
+sed -n '1,200p' "$tmp"
+sh "$tmp"
+rm -f "$tmp"
+```
+
+Reload the shell environment before verifying `uv`.
+
+### Shared Python developer tools
+
+```bash
 uv tool install ruff
 uv tool install pyright
 uv tool install pre-commit
+uv tool list
 ```
 
-If PyPI's file CDN is blocked, install policy-friendly equivalents:
+If PyPI is blocked, use policy-approved alternatives:
+
+- **Windows:** Winget `astral-sh.ruff`, Node.js LTS plus npm `pyright`, and
+  Winget `j178.Prek`.
+- **macOS:** `brew install ruff pyright prek`.
+- **Linux:** use current distribution packages where available; otherwise ask
+  for the approved Python/npm mirror. Do not silently use a public proxy.
+
+`prek` is a compatible pre-commit runner. On Windows, do not weaken execution
+policy for npm's `.ps1` shim; use `pyright.cmd` when needed.
+
+## 5. Install and configure Git tooling
+
+### Windows
 
 ```powershell
-winget install --exact --id astral-sh.ruff `
+winget install --exact --id Git.Git `
   --accept-package-agreements --accept-source-agreements `
   --disable-interactivity --silent
-
-winget install --exact --id OpenJS.NodeJS.LTS `
-  --accept-package-agreements --accept-source-agreements `
-  --disable-interactivity --silent
-
-& 'C:\Program Files\nodejs\npm.cmd' install --global pyright
-
-winget install --exact --id j178.Prek `
-  --accept-package-agreements --accept-source-agreements `
-  --disable-interactivity --silent
-```
-
-`prek` is a drop-in, pre-commit-compatible runner. Do not weaken PowerShell
-execution policy for npm's `.ps1` shim; verify Pyright using
-`$env:APPDATA\npm\pyright.cmd` when necessary.
-
-## 3. Git, GitHub CLI, and Git LFS
-
-Install:
-
-```powershell
 winget install --exact --id GitHub.cli `
   --accept-package-agreements --accept-source-agreements `
   --disable-interactivity --silent
-
 winget install --exact --id GitHub.GitLFS `
   --accept-package-agreements --accept-source-agreements `
   --disable-interactivity --silent
 ```
 
-Git LFS can also upgrade Git for Windows and requests elevation. After a
-successful installation:
+### macOS
 
-```powershell
+```bash
+brew install git gh git-lfs
+```
+
+### Linux
+
+Install `git`, `git-lfs`, and the GitHub CLI package using the detected package
+manager. Prefer GitHub's signed official repository for `gh` if the
+distribution's repository does not provide it.
+
+Common package names:
+
+```bash
+# Debian/Ubuntu
+sudo apt-get update
+sudo apt-get install -y git git-lfs gh
+
+# Fedora/RHEL-compatible
+sudo dnf install -y git git-lfs gh
+
+# Arch-compatible
+sudo pacman -S --needed git git-lfs github-cli
+
+# openSUSE
+sudo zypper install git git-lfs gh
+```
+
+If a package is unavailable, configure the vendor's official signed repository
+for the exact distribution rather than falling back to an arbitrary binary.
+
+### Shared Git configuration
+
+```bash
 git lfs install --skip-repo
 git config --global user.name '<git-user-name>'
 git config --global user.email '<git-email>'
 git config --global init.defaultBranch main
 git config --global core.editor 'code --wait'
 git config --global credential.helper manager
-git config --global core.sshCommand 'C:/Windows/System32/OpenSSH/ssh.exe'
 ```
+
+Only set `credential.helper manager` if Git Credential Manager is installed.
+On macOS, `osxkeychain` is a valid native fallback. On Linux, do not configure
+plaintext credential storage.
 
 Copilot Desktop can inject private Git/gh binaries into its own process `PATH`.
-Verify persistent system installations directly when versions appear stale:
+When versions appear stale, compare `command -v -a git gh` or
+`Get-Command git,gh -All` with the persistent shell `PATH`.
 
-```powershell
-& 'C:\Program Files\Git\cmd\git.exe' --version
-& 'C:\Program Files\GitHub CLI\gh.exe' --version
-& 'C:\Program Files\Git LFS\git-lfs.exe' version
+## 6. Configure SSH and GitHub
+
+Use `~/.ssh/id_ed25519_github` unless the user chooses another path. Preserve an
+existing key:
+
+```bash
+mkdir -p "$HOME/.ssh"
+chmod 700 "$HOME/.ssh"
+test -f "$HOME/.ssh/id_ed25519_github" ||
+  ssh-keygen -t ed25519 -C '<git-email>' \
+    -f "$HOME/.ssh/id_ed25519_github"
 ```
 
-## 4. Windows OpenSSH and GitHub
+Run `ssh-keygen` interactively so the user can enter a passphrase securely.
 
-Use `~\.ssh\id_ed25519_github` unless the user chooses another path. Preserve an
-existing key. In an interactive terminal:
-
-```powershell
-$key = Join-Path $env:USERPROFILE '.ssh\id_ed25519_github'
-New-Item -ItemType Directory -Force -Path (Split-Path $key) | Out-Null
-if (-not (Test-Path -LiteralPath $key)) {
-  ssh-keygen -t ed25519 -C '<git-email>' -f $key
-}
-```
-
-Enable the Windows SSH agent from an elevated PowerShell:
-
-```powershell
-Set-Service -Name ssh-agent -StartupType Automatic
-Start-Service -Name ssh-agent
-```
-
-Append this block to `~\.ssh\config` only if a `Host github.com` block does not
-already exist:
+Append a `Host github.com` block only if one does not already exist:
 
 ```text
 Host github.com
@@ -209,77 +347,184 @@ Host github.com
     AddKeysToAgent yes
 ```
 
-Load the key interactively:
+On macOS, add `UseKeychain yes` to that block and load the key with:
 
-```powershell
-ssh-add "$env:USERPROFILE\.ssh\id_ed25519_github"
+```bash
+ssh-add --apple-use-keychain "$HOME/.ssh/id_ed25519_github"
 ```
 
-Configure SSH signing:
+On Linux, reuse the desktop/session SSH agent when `$SSH_AUTH_SOCK` is set. If
+no agent exists, start one for the current session:
+
+```bash
+eval "$(ssh-agent -s)"
+ssh-add "$HOME/.ssh/id_ed25519_github"
+```
+
+Do not add `eval "$(ssh-agent -s)"` to every shell startup automatically; that
+creates orphaned agents. Offer a desktop keyring, `keychain`, or a user systemd
+service if the user wants persistence.
+
+On Windows, enable and use Windows OpenSSH from elevated PowerShell:
 
 ```powershell
+Set-Service -Name ssh-agent -StartupType Automatic
+Start-Service -Name ssh-agent
+ssh-add "$env:USERPROFILE\.ssh\id_ed25519_github"
+git config --global core.sshCommand 'C:/Windows/System32/OpenSSH/ssh.exe'
+git config --global gpg.ssh.program `
+  'C:/Windows/System32/OpenSSH/ssh-keygen.exe'
+```
+
+Configure SSH commit and tag signing on every platform:
+
+```bash
 git config --global gpg.format ssh
-git config --global user.signingkey '~/.ssh/id_ed25519_github.pub'
+git config --global user.signingkey ~/.ssh/id_ed25519_github.pub
 git config --global commit.gpgsign true
 git config --global tag.gpgSign true
 ```
 
-Authenticate GitHub and upload the public key:
+Authenticate GitHub and upload the key:
 
-```powershell
-& 'C:\Program Files\GitHub CLI\gh.exe' auth login `
-  --hostname github.com --git-protocol ssh --web
+```bash
+gh auth login --hostname github.com --git-protocol ssh
 ```
 
-Verify with Windows OpenSSH:
+Register the public key separately as a signing key so GitHub can verify
+commits:
 
-```powershell
+```bash
+gh auth refresh --hostname github.com --scopes admin:ssh_signing_key
+gh ssh-key add "$HOME/.ssh/id_ed25519_github.pub" \
+  --type signing --title '<machine name> signing key'
+```
+
+Verify:
+
+```bash
 ssh-add -l
 ssh -o StrictHostKeyChecking=accept-new -T git@github.com
 ```
 
-GitHub's successful SSH greeting exits with status 1 because GitHub does not
-provide shell access. Treat the text `You've successfully authenticated` as
-success, not the exit code alone.
+GitHub's successful SSH greeting exits with status 1 because it does not provide
+shell access. Treat `You've successfully authenticated` as success.
 
-## 5. PowerShell and Azure tooling
+## 7. Install PowerShell and Azure tools
 
-Install:
+### Windows
 
 ```powershell
 winget install --exact --id Microsoft.PowerShell `
   --accept-package-agreements --accept-source-agreements `
   --disable-interactivity --silent
-
 winget install --exact --id Microsoft.AzureCLI `
   --accept-package-agreements --accept-source-agreements `
   --disable-interactivity --silent
 ```
 
-Current PowerShell releases may be MSIX packages. Do not assume the legacy
-`C:\Program Files\PowerShell\7\pwsh.exe` path. Locate the executable with:
+PowerShell may be an MSIX package under WindowsApps. Resolve it through `pwsh`
+or `$env:LOCALAPPDATA\Microsoft\WindowsApps\pwsh.exe`; do not assume the legacy
+`C:\Program Files\PowerShell\7` path.
 
-```powershell
-$pwsh = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\pwsh.exe'
-& $pwsh --version
+### macOS
+
+```bash
+brew install --cask powershell
+brew install azure-cli
 ```
 
-Install Azure PowerShell from PowerShell 7:
+### Linux
+
+Install both tools from Microsoft's signed repository for the exact detected
+distribution and release. On Debian/Ubuntu, use the matching
+`packages-microsoft-prod` configuration package. On Fedora/RHEL-compatible
+systems, use Microsoft's matching signed RPM repository. Do not reuse an Ubuntu
+or RHEL repository on a different distribution.
+
+After configuring the repository, package names are normally:
+
+```bash
+# Debian/Ubuntu
+sudo apt-get update
+sudo apt-get install -y powershell azure-cli
+
+# Fedora/RHEL-compatible
+sudo dnf install -y powershell azure-cli
+```
+
+For Arch/openSUSE or unsupported versions, prefer official release packages or
+containers and verify checksums. Do not invent a repository URL.
+
+### Shared Azure PowerShell module
+
+Install from PowerShell 7:
 
 ```powershell
-pwsh -NoLogo -NoProfile -Command @'
+$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 Install-PSResource -Name Az -Repository PSGallery -Scope CurrentUser `
   -TrustRepository -Quiet -AcceptLicense
 Get-Module Az -ListAvailable |
   Sort-Object Version -Descending |
   Select-Object -First 1 Name, Version
-'@
 ```
 
-Do not set PSGallery permanently trusted unless the user asks.
+If PSGallery is blocked, ask for the approved PowerShell repository. Do not
+permanently trust a substitute feed without confirmation.
 
-## 6. Windows Terminal, Hyper-V, WSL 2, Ubuntu, and Docker
+## 8. Install Docker
+
+### Windows
+
+Install Docker Desktop:
+
+```powershell
+winget install --exact --id Docker.DockerDesktop `
+  --accept-package-agreements --accept-source-agreements `
+  --disable-interactivity --silent
+```
+
+Complete the WSL 2 setup in the Windows-only section before starting Docker.
+
+### macOS
+
+Install Docker Desktop:
+
+```bash
+brew install --cask docker
+```
+
+Launch Docker once through Finder or `open -a Docker`, let the user accept the
+license and privileged helper prompt, then wait until `docker info` succeeds.
+On managed Macs, respect the organization's approved container runtime.
+
+### Linux
+
+Prefer Docker Engine from Docker's official signed repository for the exact
+distribution. Remove only conflicting packages explicitly identified by
+Docker's documentation; never remove container runtimes speculatively.
+
+Enable the service after installation:
+
+```bash
+sudo systemctl enable --now docker
+sudo systemctl enable --now containerd
+```
+
+Adding the user to the `docker` group grants root-equivalent access. Explain
+that risk and ask before running:
+
+```bash
+sudo usermod -aG docker "$USER"
+```
+
+The user must log out and back in for group membership to apply. Rootless
+Docker is the preferred alternative when supported by the workload.
+
+## 9. Windows-only virtualization, WSL 2, and Ubuntu
+
+Skip this section entirely on macOS and Linux.
 
 Install Windows Terminal:
 
@@ -289,8 +534,7 @@ winget install --exact --id Microsoft.WindowsTerminal `
   --disable-interactivity --silent
 ```
 
-Check Windows edition and virtualization support. Full Hyper-V is supported on
-Pro/Enterprise/Education, not Home. Do not apply unofficial Home workarounds:
+Check Windows edition and virtualization:
 
 ```powershell
 Get-CimInstance Win32_OperatingSystem |
@@ -298,15 +542,21 @@ Get-CimInstance Win32_OperatingSystem |
 systeminfo.exe | Select-String 'Hyper-V Requirements'
 ```
 
-From elevated PowerShell, enable supported features:
+Full Hyper-V is supported on Pro, Enterprise, and Education, not Home. Do not
+apply unofficial Home workarounds. WSL 2 uses Virtual Machine Platform and is
+supported independently of the full Hyper-V management feature.
+
+From elevated PowerShell, enable supported features idempotently:
 
 ```powershell
 $features = @(
-  'Microsoft-Hyper-V-All',
   'VirtualMachinePlatform',
   'Microsoft-Windows-Subsystem-Linux',
   'HypervisorPlatform'
 )
+if ((Get-CimInstance Win32_OperatingSystem).Caption -notmatch ' Home') {
+  $features += 'Microsoft-Hyper-V-All'
+}
 foreach ($feature in $features) {
   $state = Get-WindowsOptionalFeature -Online -FeatureName $feature
   if ($state.State -ne 'Enabled') {
@@ -317,8 +567,8 @@ foreach ($feature in $features) {
 bcdedit /set hypervisorlaunchtype auto
 ```
 
-Keep service startup types aligned with Windows defaults while ensuring they are
-not disabled:
+Keep service startup types aligned with Windows defaults while ensuring they
+are not disabled:
 
 ```powershell
 $serviceModes = @{
@@ -336,7 +586,7 @@ foreach ($name in $serviceModes.Keys) {
 }
 ```
 
-Enable WSL without selecting an old default distro:
+Enable WSL without silently selecting an old default distribution:
 
 ```powershell
 wsl --install --no-distribution
@@ -344,76 +594,87 @@ wsl --set-default-version 2
 wsl --list --online
 ```
 
-Choose the highest available Ubuntu release ending in `.04` and labeled LTS.
-For the September 2026 catalog this is:
+Select the highest Ubuntu version that the live catalog explicitly labels LTS;
+never hardcode a previously current release. Install without launching:
 
 ```powershell
-wsl --install -d Ubuntu-26.04 --no-launch
+wsl --install -d <latest-Ubuntu-LTS-name> --no-launch
 ```
 
-Install Docker Desktop and approve elevation:
-
-```powershell
-winget install --exact --id Docker.DockerDesktop `
-  --accept-package-agreements --accept-source-agreements `
-  --disable-interactivity --silent
-```
-
-## 7. Reboot boundary and finalization
-
-After Hyper-V, Virtual Machine Platform, or WSL features change, stop and tell
-the user a reboot is mandatory. Do not attempt to start WSL 2 or Docker before
-the reboot and report their resulting virtualization error as a permanent
-failure.
+After feature changes, stop and tell the user a reboot is mandatory. Do not
+interpret pre-reboot WSL/Docker virtualization errors as permanent failures.
 
 After reboot:
 
-1. Launch `Ubuntu-<version>` and let the user create the Linux username and
-   password interactively.
-2. Set it as the default distro and confirm WSL 2:
+1. Launch the installed Ubuntu distribution and let the user create its Linux
+   username and password interactively.
+2. Set it as the default and confirm version 2:
 
 ```powershell
-wsl --set-default Ubuntu-26.04
-wsl --set-version Ubuntu-26.04 2
+wsl --set-default <latest-Ubuntu-LTS-name>
+wsl --set-version <latest-Ubuntu-LTS-name> 2
 wsl --list --verbose
 ```
 
-3. Start Docker Desktop, accept its terms if the user agrees, select the WSL 2
-   backend, and enable integration with the Ubuntu distro.
-4. Verify:
+3. Start Docker Desktop, let the user accept its terms, select the WSL 2
+   backend, and enable integration with the Ubuntu distribution.
 
-```powershell
-docker version
-docker info
-docker run --rm hello-world
-wsl -d Ubuntu-26.04 -- uname -a
-wsl -d Ubuntu-26.04 -- cat /etc/os-release
-```
+## 10. Final verification
 
-## 8. Final verification
+Run checks from a newly opened login shell so package-manager `PATH` changes are
+present.
 
-Run verification from a newly opened terminal:
+### Shared checks
 
-```powershell
+```text
 code --version
-py -0p
-python --version
 uv --version
+uv python list
+python3 --version or the selected uv-managed Python
 ruff --version
-pyright.cmd --version
-prek --version
+pyright --version
+pre-commit --version or prek --version
 git --version
 git lfs version
 gh --version
+gh auth status
 ssh-add -l
 pwsh --version
 az version
-pwsh -NoProfile -Command 'Get-Module Az -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1 Name,Version'
-wt --version
-wsl --list --verbose
+pwsh -NoProfile -Command "Get-Module Az -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1 Name,Version"
 docker version
+docker info
+docker run --rm hello-world
 ```
 
-Report exact installed versions, remaining policy restrictions, whether a reboot
-is pending, and any interactive first-run steps. Distinguish installed,
-configured, authenticated, and operational states.
+### Windows additions
+
+```powershell
+py --list-paths
+wt --version
+wsl --list --verbose
+wsl -d <latest-Ubuntu-LTS-name> -- uname -a
+wsl -d <latest-Ubuntu-LTS-name> -- cat /etc/os-release
+```
+
+### macOS additions
+
+```bash
+brew doctor
+brew list --versions git gh git-lfs uv azure-cli
+system_profiler SPSoftwareDataType
+```
+
+### Linux additions
+
+```bash
+cat /etc/os-release
+systemctl is-enabled docker
+systemctl is-active docker
+id
+```
+
+Report exact installed versions, package sources, policy restrictions, reboot
+or re-login requirements, and interactive first-run steps. Distinguish
+installed, configured, authenticated, and operational states. A task is not
+complete until the requested tools are operational on the detected platform.

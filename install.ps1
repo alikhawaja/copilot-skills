@@ -7,9 +7,15 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$source = Join-Path $PSScriptRoot "skills\$Skill"
+$source = Join-Path (Join-Path $PSScriptRoot 'skills') $Skill
 $manifest = Join-Path $source 'SKILL.md'
-$destination = Join-Path $HOME ".copilot\skills\$Skill"
+$skillsHome = if ($env:COPILOT_SKILLS_HOME) {
+    $env:COPILOT_SKILLS_HOME
+}
+else {
+    Join-Path (Join-Path $HOME '.copilot') 'skills'
+}
+$destination = Join-Path $skillsHome $Skill
 
 if (-not (Test-Path -LiteralPath $manifest -PathType Leaf)) {
     throw "Skill '$Skill' was not found at '$source'."
@@ -20,7 +26,7 @@ if ($content -notmatch "(?s)^---\r?\nname:\s+$([regex]::Escape($Skill))\r?\n.*?\
     throw "SKILL.md has missing or invalid frontmatter for '$Skill'."
 }
 
-New-Item -ItemType Directory -Force -Path (Split-Path $destination) | Out-Null
+New-Item -ItemType Directory -Force -Path $skillsHome | Out-Null
 
 $staging = "$destination.new"
 if (Test-Path -LiteralPath $staging) {

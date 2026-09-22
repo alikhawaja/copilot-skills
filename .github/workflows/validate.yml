@@ -1,0 +1,36 @@
+name: Validate skills
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate skill manifests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $manifests = Get-ChildItem skills -Filter SKILL.md -File -Recurse
+          if (-not $manifests) {
+            throw 'No skill manifests found.'
+          }
+
+          foreach ($manifest in $manifests) {
+            $skill = Split-Path $manifest.DirectoryName -Leaf
+            $content = Get-Content $manifest.FullName -Raw
+            $pattern = "(?s)^---\r?\nname:\s+$([regex]::Escape($skill))\r?\n.*?\r?\n---\r?\n"
+            if ($content -notmatch $pattern) {
+              throw "Invalid frontmatter: $($manifest.FullName)"
+            }
+            if ($content -match '(gh[opsu]_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16})') {
+              throw "Possible credential detected: $($manifest.FullName)"
+            }
+          }

@@ -10,6 +10,7 @@ Sets up or repairs a Windows, macOS, or Linux developer machine with:
 
 - VS Code and development extensions
 - Git, GitHub CLI, Git LFS, OpenSSH, and SSH signing
+- GitHub Copilot CLI
 - Python 3.14 and 3.13, uv, Ruff, Pyright, and pre-commit-compatible tooling
 - PowerShell 7, Azure CLI, and Azure PowerShell
 - Docker Desktop on Windows/macOS or Docker Engine on Linux

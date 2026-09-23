@@ -2,7 +2,7 @@
 name: dev-machine-setup
 description: >-
   Set up or repair a Windows, macOS, or Linux developer machine with VS Code,
-  Git and GitHub SSH, Python 3.14 and 3.13, uv, Ruff, Pyright,
+  Git, GitHub SSH, GitHub Copilot CLI, Python 3.14 and 3.13, uv, Ruff, Pyright,
   pre-commit-compatible tooling, PowerShell 7, Azure CLI and Azure PowerShell,
   and Docker. On Windows, also configures Windows Terminal, Hyper-V, WSL 2, and
   the latest Ubuntu LTS. Use when the user asks to provision, bootstrap,
@@ -110,6 +110,7 @@ Python manager:   uv --version
 Python tools:     ruff --version; pyright --version; prek --version
 Git:              git --version; git lfs version
 GitHub CLI:       gh --version; gh auth status
+Copilot CLI:      copilot --version
 SSH:              ssh -V; ssh-add -l
 PowerShell:       pwsh --version
 Azure:            az version
@@ -410,7 +411,92 @@ ssh -o StrictHostKeyChecking=accept-new -T git@github.com
 GitHub's successful SSH greeting exits with status 1 because it does not provide
 shell access. Treat `You've successfully authenticated` as success.
 
-## 7. Install PowerShell and Azure tools
+## 7. Install GitHub Copilot CLI
+
+Install the stable standalone GitHub Copilot CLI only when the user has an
+active Copilot subscription or organization-provided access. This is the
+agentic `copilot` executable, not the retired GitHub CLI extension.
+
+### Windows
+
+Prefer the official Winget package:
+
+```powershell
+winget install --exact --id GitHub.Copilot `
+  --accept-package-agreements --accept-source-agreements `
+  --disable-interactivity --silent
+```
+
+PowerShell 7 or later is required. Reload the persistent user and machine
+`PATH`, or open a new terminal, before verification.
+
+### macOS and Linux
+
+Prefer the official Homebrew cask when Homebrew is available:
+
+```bash
+brew install --cask copilot-cli
+```
+
+If Homebrew is unavailable, download the official installer for inspection
+rather than piping it directly into a shell:
+
+```bash
+tmp="$(mktemp)"
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://gh.io/copilot-install -o "$tmp"
+sed -n '1,240p' "$tmp"
+bash "$tmp"
+rm -f "$tmp"
+```
+
+The installer defaults to `$HOME/.local` for a non-root user. Ensure its binary
+directory is present in the login shell `PATH`.
+
+### npm fallback on any platform
+
+Use npm only when Node.js 22 or later is already part of the user's toolchain:
+
+```bash
+npm install --global @github/copilot
+```
+
+If npm has `ignore-scripts=true`, do not change the user's persistent npm
+configuration. Apply the documented one-command override:
+
+```bash
+npm_config_ignore_scripts=false npm install --global @github/copilot
+```
+
+Do not install stable and prerelease packages side by side, and do not mix
+Winget, Homebrew, and npm installations. Upgrade through the package manager
+that owns the installed executable.
+
+### Authentication and verification
+
+Verify without starting an agent session:
+
+```bash
+copilot --version
+copilot --help
+```
+
+Authentication is interactive:
+
+```bash
+copilot login
+```
+
+Let the user complete GitHub device authorization. Organization or enterprise
+policy can disable Copilot CLI even when another Copilot surface works. Do not
+create or request a personal access token unless device authentication is
+unavailable and the user explicitly chooses that approach.
+
+After login, confirm authentication with a harmless interactive launch or the
+CLI's current account/status command if the installed version exposes one.
+Never use a destructive prompt merely to test access.
+
+## 8. Install PowerShell and Azure tools
 
 ### Windows
 
@@ -473,7 +559,7 @@ Get-Module Az -ListAvailable |
 If PSGallery is blocked, ask for the approved PowerShell repository. Do not
 permanently trust a substitute feed without confirmation.
 
-## 8. Install Docker
+## 9. Install Docker
 
 ### Windows
 
@@ -522,7 +608,7 @@ sudo usermod -aG docker "$USER"
 The user must log out and back in for group membership to apply. Rootless
 Docker is the preferred alternative when supported by the workload.
 
-## 9. Windows-only virtualization, WSL 2, and Ubuntu
+## 10. Windows-only virtualization, WSL 2, and Ubuntu
 
 Skip this section entirely on macOS and Linux.
 
@@ -619,7 +705,7 @@ wsl --list --verbose
 3. Start Docker Desktop, let the user accept its terms, select the WSL 2
    backend, and enable integration with the Ubuntu distribution.
 
-## 10. Final verification
+## 11. Final verification
 
 Run checks from a newly opened login shell so package-manager `PATH` changes are
 present.
@@ -638,6 +724,7 @@ git --version
 git lfs version
 gh --version
 gh auth status
+copilot --version
 ssh-add -l
 pwsh --version
 az version

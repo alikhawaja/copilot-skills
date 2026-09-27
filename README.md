@@ -9,12 +9,14 @@ Reusable skills for GitHub Copilot.
 Sets up or repairs a Windows, macOS, or Linux developer machine with:
 
 - VS Code and development extensions
+- The latest stable .NET SDK, C# Dev Kit, and native C/C++ build tools
 - Git, GitHub CLI, Git LFS, OpenSSH, and SSH signing
 - GitHub Copilot CLI
 - Python 3.14 and 3.13, uv, Ruff, Pyright, and pre-commit-compatible tooling
 - PowerShell 7, Azure CLI, and Azure PowerShell
 - Docker Desktop on Windows/macOS or Docker Engine on Linux
-- Windows Terminal, Hyper-V, WSL 2, and Ubuntu LTS on Windows
+- Explorer integration, Visual Studio Build Tools, Windows Terminal, Hyper-V,
+  WSL 2, and Ubuntu LTS on Windows
 
 The workflow preserves existing credentials, respects enterprise security
 policy, explains elevation prompts, and verifies each installation.

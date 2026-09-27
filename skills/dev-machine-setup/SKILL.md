@@ -3,10 +3,12 @@ name: dev-machine-setup
 description: >-
   Set up or repair a Windows, macOS, or Linux developer machine with VS Code,
   Git, GitHub SSH, GitHub Copilot CLI, Python 3.14 and 3.13, uv, Ruff, Pyright,
-  pre-commit-compatible tooling, PowerShell 7, Azure CLI and Azure PowerShell,
-  and Docker. On Windows, also configures Windows Terminal, Hyper-V, WSL 2, and
-  the latest Ubuntu LTS. Use when the user asks to provision, bootstrap,
-  configure, verify, or repair a development machine.
+  pre-commit-compatible tooling, the latest stable .NET SDK, C# Dev Kit,
+  native C/C++ compilers, PowerShell 7, Azure CLI, Azure PowerShell, and Docker.
+  On Windows, also configures Explorer integration, Visual Studio Build Tools,
+  Windows Terminal, Hyper-V, WSL 2, and the latest Ubuntu LTS. Use when the user
+  asks to provision, bootstrap, configure, verify, or repair a development
+  machine.
 ---
 
 # Cross-platform developer machine setup
@@ -108,6 +110,9 @@ VS Code:          code --version
 Python:           python3 --version; python --version
 Python manager:   uv --version
 Python tools:     ruff --version; pyright --version; prek --version
+.NET SDK:         dotnet --info; dotnet --list-sdks
+C# extensions:    code --list-extensions --show-versions
+Native compiler:  cl, clang, or cc --version
 Git:              git --version; git lfs version
 GitHub CLI:       gh --version; gh auth status
 Copilot CLI:      copilot --version
@@ -125,6 +130,15 @@ py --list-paths
 wt --version
 wsl --status
 wsl --list --verbose
+```
+
+Also inspect Visual Studio and MSVC components when present:
+
+```powershell
+$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+if (Test-Path $vswhere) {
+  & $vswhere -products '*' -format json
+}
 ```
 
 Confirm or create the source root only after the user agrees. Inspect global Git
@@ -176,7 +190,162 @@ Install extensions one at a time and verify with
 `GitHub.copilot` when Copilot Chat is built into the current VS Code release;
 forcing it can attempt to downgrade a built-in extension.
 
-## 4. Install uv, Python, and Python tools
+### Windows Explorer integration
+
+The VS Code user installer can be healthy while its optional Explorer commands
+are absent. Check all three per-user registrations before repairing them:
+
+```powershell
+$keys = @(
+  'Registry::HKEY_CURRENT_USER\Software\Classes\*\shell\VSCode',
+  'Registry::HKEY_CURRENT_USER\Software\Classes\Directory\shell\VSCode',
+  'Registry::HKEY_CURRENT_USER\Software\Classes\Directory\Background\shell\VSCode'
+)
+$keys | ForEach-Object {
+  [pscustomobject]@{ Key = $_; Present = Test-Path -LiteralPath $_ }
+}
+```
+
+Prefer reinstalling with the installer's file and folder context-menu tasks when
+doing a fresh interactive installation. To repair an existing per-user install
+without reinstalling, register only the missing entries under `HKCU`; never
+write them under `HKLM` unless the user requested machine-wide integration:
+
+```powershell
+$code = "$env:LOCALAPPDATA\Programs\Microsoft VS Code\Code.exe"
+if (-not (Test-Path -LiteralPath $code)) {
+  throw "VS Code executable not found: $code"
+}
+
+$entries = @(
+  @{ Key = 'HKCU\Software\Classes\*\shell\VSCode'; Target = '%1' },
+  @{ Key = 'HKCU\Software\Classes\Directory\shell\VSCode'; Target = '%1' },
+  @{ Key = 'HKCU\Software\Classes\Directory\Background\shell\VSCode'; Target = '%V' }
+)
+foreach ($entry in $entries) {
+  $command = '"{0}" "{1}"' -f $code, $entry.Target
+  reg.exe add $entry.Key /ve /d 'Open with Code' /f | Out-Null
+  reg.exe add $entry.Key /v Icon /t REG_SZ /d $code /f | Out-Null
+  reg.exe add "$($entry.Key)\command" /ve /d $command /f | Out-Null
+}
+```
+
+On Windows 11, legacy shell commands normally appear under **Show more
+options** or `Shift+F10`. Reopen File Explorer after registration.
+
+## 4. Install the .NET SDK, C# tooling, and native compilers
+
+Install the highest stable .NET SDK available from the platform's trusted
+package source. Do not select a preview or release candidate unless the user
+explicitly requests prerelease tooling. Runtimes alone are insufficient for
+building projects; verify that `dotnet --list-sdks` returns at least one SDK.
+
+### Windows
+
+Discover the live stable SDK major before choosing the package:
+
+```powershell
+winget search --id Microsoft.DotNet.SDK --source winget `
+  --accept-source-agreements
+```
+
+Install the highest non-preview major shown by that command:
+
+```powershell
+winget install --exact --id Microsoft.DotNet.SDK.<major> --source winget `
+  --accept-package-agreements --accept-source-agreements `
+  --disable-interactivity --silent
+```
+
+Install C# Dev Kit in VS Code. It installs the compatible C# extension as a
+dependency:
+
+```powershell
+code --install-extension ms-dotnettools.csdevkit
+code --list-extensions --show-versions |
+  Select-String '^ms-dotnettools\.(csdevkit|csharp)@'
+```
+
+For MSVC, install Visual Studio Build Tools with the Desktop development with
+C++ workload. Explain that this is a multi-gigabyte machine-wide installation
+and that Windows may display a UAC prompt:
+
+```powershell
+winget install --exact --id Microsoft.VisualStudio.2022.BuildTools `
+  --source winget --accept-package-agreements --accept-source-agreements `
+  --disable-interactivity `
+  --override '--wait --passive --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended'
+```
+
+`cl.exe` is intentionally available inside a Visual Studio developer
+environment rather than on the global `PATH`. Verify the x64 compiler through
+`vcvars64.bat`:
+
+```powershell
+$installerDir = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
+$vswhere = Join-Path $installerDir 'vswhere.exe'
+$install = & $vswhere -latest -products '*' `
+  -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+  -property installationPath
+if (-not $install) {
+  throw 'MSVC x64/x86 toolchain not found.'
+}
+$devcmd = Join-Path $install 'VC\Auxiliary\Build\vcvars64.bat'
+& $env:ComSpec /c "set `"PATH=$installerDir;%PATH%`" && call `"$devcmd`" >nul && where cl && cl 2>&1"
+```
+
+### macOS
+
+Use the current stable Homebrew .NET SDK cask and Apple's native compiler
+toolchain:
+
+```bash
+brew install --cask dotnet-sdk
+xcode-select -p >/dev/null 2>&1 || xcode-select --install
+code --install-extension ms-dotnettools.csdevkit
+dotnet --list-sdks
+clang --version
+```
+
+Do not replace the Apple-provided Clang with an unrelated compiler unless the
+project requires it. If `xcode-select --install` opens a dialog, let the user
+complete it before verification.
+
+### Linux
+
+Install `dotnet-sdk-<major>.0` from Microsoft's signed repository configured for
+the exact distribution and release. Do not mix Microsoft's repository with an
+unrelated distribution package or install a preview accidentally. Install the
+native build toolchain from the distribution:
+
+```bash
+# Debian/Ubuntu
+sudo apt-get update
+sudo apt-get install -y dotnet-sdk-<major>.0 build-essential cmake ninja-build pkg-config
+
+# Fedora/RHEL-compatible
+sudo dnf install -y dotnet-sdk-<major>.0 gcc gcc-c++ make cmake ninja-build pkgconf-pkg-config
+
+# Arch-compatible
+sudo pacman -S --needed dotnet-sdk gcc cmake ninja pkgconf
+
+# openSUSE
+sudo zypper install dotnet-sdk-<major>.0 gcc gcc-c++ make cmake ninja pkg-config
+```
+
+Install C# Dev Kit after Microsoft VS Code is operational:
+
+```bash
+code --install-extension ms-dotnettools.csdevkit
+code --list-extensions --show-versions |
+  grep -E '^ms-dotnettools\.(csdevkit|csharp)@'
+dotnet --list-sdks
+cc --version
+```
+
+Respect C# Dev Kit's license terms and organization policy on every platform.
+
+## 5. Install uv, Python, and Python tools
 
 Use uv to provide consistent Python versions on all platforms:
 
@@ -255,7 +424,50 @@ If PyPI is blocked, use policy-approved alternatives:
 `prek` is a compatible pre-commit runner. On Windows, do not weaken execution
 policy for npm's `.ps1` shim; use `pyright.cmd` when needed.
 
-## 5. Install and configure Git tooling
+### Managed Python package feeds and Python 3.14 compatibility
+
+When public package files are blocked, discover the approved pip configuration
+without printing credentials:
+
+```text
+python -m pip config debug
+python -m pip config list
+```
+
+Do not assume uv reads pip's global configuration. Pass the approved index
+explicitly, or configure uv through the organization's approved mechanism:
+
+```text
+uv pip install --python <environment-python> \
+  --index-url <approved-simple-index-url> \
+  --requirements requirements.txt
+```
+
+For Python 3.14, perform a dry run when requirements are unpinned and verify
+that compiled dependencies have compatible wheels. An old NumPy release may be
+selected by transitive constraints and attempt a local source build. Do not
+silently edit `requirements.txt`; use an explicit compatible constraint such as
+`numpy>=2` only after checking the resolver plan, explain the change, and keep
+the original requirements file intact unless the user asks for a reproducible
+pin.
+
+After installation, run both metadata and runtime checks:
+
+```text
+uv pip check --python <environment-python>
+<environment-python> -c "import numpy, pandas, scipy, sklearn"
+```
+
+`uv pip check` cannot detect package API mismatches. Import representative
+top-level packages, especially beta agent frameworks and their protocol
+dependencies, and apply the narrowest version constraint only after confirming
+the failing API boundary.
+
+When the uv cache and environment are on different filesystems, use
+`--link-mode copy` to avoid hardlink warnings; this is a performance/storage
+choice, not a dependency fix.
+
+## 6. Install and configure Git tooling
 
 ### Windows
 
@@ -322,7 +534,7 @@ Copilot Desktop can inject private Git/gh binaries into its own process `PATH`.
 When versions appear stale, compare `command -v -a git gh` or
 `Get-Command git,gh -All` with the persistent shell `PATH`.
 
-## 6. Configure SSH and GitHub
+## 7. Configure SSH and GitHub
 
 Use `~/.ssh/id_ed25519_github` unless the user chooses another path. Preserve an
 existing key:
@@ -411,7 +623,7 @@ ssh -o StrictHostKeyChecking=accept-new -T git@github.com
 GitHub's successful SSH greeting exits with status 1 because it does not provide
 shell access. Treat `You've successfully authenticated` as success.
 
-## 7. Install GitHub Copilot CLI
+## 8. Install GitHub Copilot CLI
 
 Install the stable standalone GitHub Copilot CLI only when the user has an
 active Copilot subscription or organization-provided access. This is the
@@ -496,7 +708,7 @@ After login, confirm authentication with a harmless interactive launch or the
 CLI's current account/status command if the installed version exposes one.
 Never use a destructive prompt merely to test access.
 
-## 8. Install PowerShell and Azure tools
+## 9. Install PowerShell and Azure tools
 
 ### Windows
 
@@ -559,7 +771,7 @@ Get-Module Az -ListAvailable |
 If PSGallery is blocked, ask for the approved PowerShell repository. Do not
 permanently trust a substitute feed without confirmation.
 
-## 9. Install Docker
+## 10. Install Docker
 
 ### Windows
 
@@ -608,7 +820,7 @@ sudo usermod -aG docker "$USER"
 The user must log out and back in for group membership to apply. Rootless
 Docker is the preferred alternative when supported by the workload.
 
-## 10. Windows-only virtualization, WSL 2, and Ubuntu
+## 11. Windows-only virtualization, WSL 2, and Ubuntu
 
 Skip this section entirely on macOS and Linux.
 
@@ -705,7 +917,7 @@ wsl --list --verbose
 3. Start Docker Desktop, let the user accept its terms, select the WSL 2
    backend, and enable integration with the Ubuntu distribution.
 
-## 11. Final verification
+## 12. Final verification
 
 Run checks from a newly opened login shell so package-manager `PATH` changes are
 present.
@@ -714,6 +926,9 @@ present.
 
 ```text
 code --version
+code --list-extensions --show-versions
+dotnet --info
+dotnet --list-sdks
 uv --version
 uv python list
 python3 --version or the selected uv-managed Python
@@ -739,6 +954,11 @@ docker run --rm hello-world
 ```powershell
 py --list-paths
 wt --version
+$installerDir = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
+$vswhere = Join-Path $installerDir 'vswhere.exe'
+$install = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+$devcmd = Join-Path $install 'VC\Auxiliary\Build\vcvars64.bat'
+& $env:ComSpec /c "set `"PATH=$installerDir;%PATH%`" && call `"$devcmd`" >nul && where cl && cl 2>&1"
 wsl --list --verbose
 wsl -d <latest-Ubuntu-LTS-name> -- uname -a
 wsl -d <latest-Ubuntu-LTS-name> -- cat /etc/os-release
@@ -749,6 +969,8 @@ wsl -d <latest-Ubuntu-LTS-name> -- cat /etc/os-release
 ```bash
 brew doctor
 brew list --versions git gh git-lfs uv azure-cli
+brew list --cask --versions dotnet-sdk
+clang --version
 system_profiler SPSoftwareDataType
 ```
 
@@ -756,6 +978,7 @@ system_profiler SPSoftwareDataType
 
 ```bash
 cat /etc/os-release
+cc --version
 systemctl is-enabled docker
 systemctl is-active docker
 id

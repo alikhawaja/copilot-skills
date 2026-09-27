@@ -4,6 +4,14 @@ Reusable skills for GitHub Copilot.
 
 ## Available skills
 
+### `azure-dc2dc`
+
+Plans and documents an Azure data-center-to-data-center or cross-region
+migration for a complete Azure estate. The workflow covers authenticated,
+read-only discovery, inventory validation, design decisions, migration waves,
+Microsoft program alignment, and publication of customer-ready deliverables
+for a planned destination region.
+
 ### `dev-machine-setup`
 
 Sets up or repairs a Windows, macOS, or Linux developer machine with:
@@ -26,12 +34,14 @@ Run either installer from a cloned copy of this repository.
 PowerShell 7 on Windows, macOS, or Linux:
 
 ```powershell
+.\install.ps1 -Skill azure-dc2dc
 .\install.ps1 -Skill dev-machine-setup
 ```
 
 macOS or Linux:
 
 ```bash
+./install.sh azure-dc2dc
 ./install.sh dev-machine-setup
 ```
 
@@ -39,11 +49,16 @@ Or copy the directory manually on any platform:
 
 ```powershell
 Copy-Item -Recurse -Force `
+  .\skills\azure-dc2dc `
+  "$HOME\.copilot\skills\azure-dc2dc"
+
+Copy-Item -Recurse -Force `
   .\skills\dev-machine-setup `
   "$HOME\.copilot\skills\dev-machine-setup"
 ```
 
 ```bash
+cp -R ./skills/azure-dc2dc "$HOME/.copilot/skills/"
 cp -R ./skills/dev-machine-setup "$HOME/.copilot/skills/"
 ```
 
@@ -55,6 +70,7 @@ Pull the desired tagged release and rerun the installer:
 
 ```powershell
 git pull --ff-only
+.\install.ps1 -Skill azure-dc2dc
 .\install.ps1 -Skill dev-machine-setup
 ```
 
@@ -62,6 +78,7 @@ Or:
 
 ```bash
 git pull --ff-only
+./install.sh azure-dc2dc
 ./install.sh dev-machine-setup
 ```
 

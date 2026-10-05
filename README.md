@@ -10,8 +10,9 @@ Plans and documents an Azure data-center-to-data-center or cross-region
 migration by discovered workload. The workflow covers authenticated, read-only
 discovery, an estate overview and shared landing zone, workload dependencies,
 source SKU and destination-allocation workbooks, monthly actual-cost reporting,
-design decisions, Microsoft program alignment, and requested publication
-formats for a planned destination region.
+design decisions, Microsoft program alignment, and final packages containing
+Excel workbooks, document PDFs, and a PPTX/PDF presentation. Editable Markdown
+and Mermaid sources live in `assets`, while rendered diagrams live in `images`.
 
 ### `dev-machine-setup`
 

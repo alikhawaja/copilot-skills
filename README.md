@@ -7,10 +7,11 @@ Reusable skills for GitHub Copilot.
 ### `azure-dc2dc`
 
 Plans and documents an Azure data-center-to-data-center or cross-region
-migration for a complete Azure estate. The workflow covers authenticated,
-read-only discovery, inventory validation, design decisions, migration waves,
-Microsoft program alignment, and publication of customer-ready deliverables
-for a planned destination region.
+migration by discovered workload. The workflow covers authenticated, read-only
+discovery, an estate overview and shared landing zone, workload dependencies,
+source SKU and destination-allocation workbooks, monthly actual-cost reporting,
+design decisions, Microsoft program alignment, and requested publication
+formats for a planned destination region.
 
 ### `dev-machine-setup`
 

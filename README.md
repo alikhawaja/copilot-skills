@@ -19,6 +19,48 @@ When VMs are present, the skill checks VNet flow-log coverage and permissions
 early, discloses gaps or a per-VNet capture/time/cost plan, and requires explicit
 approval before enabling any logging.
 
+**At the start of a migration assessment:** VM dependency discovery may miss
+traffic if VNet flow logs are absent or the discovery identity lacks access.
+After confirming the tenant and selected subscriptions, the skill checks VM
+coverage and effective permissions and reports the named gaps before detailed
+analysis. The optional customer-run
+[assessment flow-log script](https://raw.githubusercontent.com/alikhawaja/copilot-skills/main/skills/azure-dc2dc/Enable-AssessmentFlowLogs.ps1)
+previews **every VNet in explicitly selected subscriptions** before creating
+assessment resources, assigning scoped access to a specified Entra user object
+ID, and enabling missing flow logs. A customer administrator can download and
+review the script, then run these commands in PowerShell 7 from the download
+directory (with Azure CLI installed):
+
+```powershell
+Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/alikhawaja/copilot-skills/main/skills/azure-dc2dc/Enable-AssessmentFlowLogs.ps1' -OutFile '.\Enable-AssessmentFlowLogs.ps1'
+# Review the saved script before running it.
+az login --tenant 00000000-0000-0000-0000-000000000000 # Replace with the customer tenant GUID
+pwsh -File .\Enable-AssessmentFlowLogs.ps1 -PlanOnly
+# Only after reviewing the full plan and obtaining approval:
+pwsh -File .\Enable-AssessmentFlowLogs.ps1
+```
+
+The script prompts for the tenant GUID, **selected subscription GUIDs** and the
+assignee's Entra **user object ID** (not email). Check the plan's full VNet list,
+assessment resources, role scopes, charges, observation window, retention and
+cleanup arrangement; execution requires typing `ENABLE ALL <count> VNETS`.
+`-PlanOnly` makes no Azure changes. The administrator needs permission to create
+resource groups, storage accounts, custom role definitions and assignments,
+provider registrations, Network Watcher resources, and flow logs. It reuses
+existing enabled flow logs, creates `rg-azure-migration-assessment` per selected
+subscription and same-region storage where new logging is needed, and requests
+explicit confirmation of the full plan before any write. New logs are **not** stopped
+automatically; budget for usage-based logging and storage charges and arrange
+cleanup after the observation period. Existing disabled VNet logs are listed
+for re-enablement with their storage and retention preserved; storage outside
+the selected subscriptions stops the script for separate access planning. It
+grants Reader at selected subscription scope, Log Analytics Reader at discovered
+workspace scope, Storage Blob Data Reader on the identified flow-log storage
+accounts, and its embedded custom operator role only on the relevant Network
+Watcher and assessment storage
+resources. Vendor appliances, external workspaces, and secret-bearing app
+configuration require separately approved access.
+
 ### `dev-machine-setup`
 
 Sets up or repairs a Windows, macOS, or Linux developer machine with:

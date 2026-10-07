@@ -9,10 +9,15 @@ Reusable skills for GitHub Copilot.
 Plans and documents an Azure data-center-to-data-center or cross-region
 migration by discovered workload. The workflow covers authenticated, read-only
 discovery, an estate overview and shared landing zone, workload dependencies,
+read-only dependency analysis from effective firewall/NSG/WAF/appliance
+policies, time-bounded traffic logs, and sanitized application configuration,
 source SKU and destination-allocation workbooks, monthly actual-cost reporting,
 design decisions, Microsoft program alignment, and final packages containing
 Excel workbooks, document PDFs, and a PPTX/PDF presentation. Editable Markdown
 and Mermaid sources live in `assets`, while rendered diagrams live in `images`.
+When VMs are present, the skill checks VNet flow-log coverage and permissions
+early, discloses gaps or a per-VNet capture/time/cost plan, and requires explicit
+approval before enabling any logging.
 
 ### `dev-machine-setup`
 

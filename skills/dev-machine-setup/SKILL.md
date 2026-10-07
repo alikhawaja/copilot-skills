@@ -192,24 +192,120 @@ forcing it can attempt to downgrade a built-in extension.
 
 ### Windows Explorer integration
 
-The VS Code user installer can be healthy while its optional Explorer commands
-are absent. Check all three per-user registrations before repairing them:
+On Windows 11, prefer the official Microsoft VS Code installer integration.
+The installer tasks `addcontextmenufiles` and `addcontextmenufolders` register
+the signed sparse AppX package `Microsoft.VisualStudioCode`. Its manifest uses
+`windows.fileExplorerContextMenus` for `Directory`,
+`Directory\Background`, and `*`, with verb `OpenWithCode` and CLSID
+`1C6DF0C0-192A-4451-BE36-6A59A86A692E`. This IExplorerCommand-style
+registration is what can place **Open with Code** directly in the Windows 11
+compact context menu. Plain `...\shell\...` registry verbs are legacy commands
+and normally appear only under **Show more options** or `Shift+F10`.
+
+Inventory the installed VS Code record and its selected Inno Setup tasks without
+changing anything:
 
 ```powershell
-$keys = @(
-  'Registry::HKEY_CURRENT_USER\Software\Classes\*\shell\VSCode',
-  'Registry::HKEY_CURRENT_USER\Software\Classes\Directory\shell\VSCode',
-  'Registry::HKEY_CURRENT_USER\Software\Classes\Directory\Background\shell\VSCode'
+$uninstallRoots = @(
+  'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+  'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+  'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
 )
-$keys | ForEach-Object {
-  [pscustomobject]@{ Key = $_; Present = Test-Path -LiteralPath $_ }
+$vscodeInstaller = Get-ChildItem $uninstallRoots -ErrorAction SilentlyContinue |
+  Get-ItemProperty |
+  Where-Object DisplayName -Like 'Microsoft Visual Studio Code*' |
+  Select-Object DisplayName, DisplayVersion, InstallLocation,
+    'Inno Setup: Selected Tasks', UninstallString
+$vscodeInstaller
+```
+
+Inspect the sparse package and the relevant manifest declarations:
+
+```powershell
+$package = Get-AppxPackage -Name Microsoft.VisualStudioCode
+$package | Select-Object Name, PackageFullName, InstallLocation, SignatureKind,
+  Status
+
+if ($package) {
+  $manifestPath = Join-Path $package.InstallLocation 'AppxManifest.xml'
+  [xml]$manifest = Get-Content -LiteralPath $manifestPath -Raw
+  $manifest.SelectNodes(
+    "//*[local-name()='Extension' and @Category='windows.fileExplorerContextMenus']"
+  ) | ForEach-Object {
+    [pscustomobject]@{
+      Category = $_.Category
+      XML = $_.OuterXml
+    }
+  }
 }
 ```
 
-Prefer reinstalling with the installer's file and folder context-menu tasks when
-doing a fresh interactive installation. To repair an existing per-user install
-without reinstalling, register only the missing entries under `HKCU`; never
-write them under `HKLM` unless the user requested machine-wide integration:
+The x64 and x86 Visual C++ redistributables may both be healthy while this menu
+integration is absent. Treat them as independent prerequisites, not evidence
+that either VS Code context-menu task is registered.
+
+An existing sparse package does not prove the optional installer tasks were
+selected. If either context-menu task is absent, repair the current user install
+with the latest Microsoft-signed **user installer** from the official VS Code
+update service. Do not downgrade merely because Winget's catalog trails VS
+Code's internal updater. Compare the installed version first, and use Winget
+only when it offers the same or a newer stable version.
+
+VS Code must be fully closed before rerunning its installer. Ask the user to
+close every VS Code window, then verify with:
+
+```powershell
+Get-Process Code -ErrorAction SilentlyContinue
+```
+
+Do not force-close VS Code or terminate its processes unless the user explicitly
+approves; unsaved editor state may be lost.
+
+Download the installer to a temporary file, verify Authenticode before running
+it, and merge the two tasks so all existing selections such as
+`associatewithfiles`, `addtopath`, and `runcode` remain enabled:
+
+```powershell
+$architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+$platform = switch ($architecture) {
+  'X64'   { 'win32-x64-user' }
+  'Arm64' { 'win32-arm64-user' }
+  default { throw "Unsupported VS Code user-installer architecture: $architecture" }
+}
+$installer = Join-Path $env:TEMP "VSCodeUserSetup-$architecture.exe"
+$uri = "https://update.code.visualstudio.com/latest/$platform/stable"
+Invoke-WebRequest -Uri $uri -OutFile $installer
+
+$signature = Get-AuthenticodeSignature -LiteralPath $installer
+if ($signature.Status -ne 'Valid' -or
+    $signature.SignerCertificate.Subject -notmatch 'Microsoft Corporation') {
+  throw "VS Code installer signature is not valid and Microsoft-signed: $($signature.Status)"
+}
+$signature | Select-Object Status,
+  @{Name='Signer'; Expression={$_.SignerCertificate.Subject}}
+
+if (Get-Process Code -ErrorAction SilentlyContinue) {
+  throw 'Close VS Code fully before rerunning the installer. Processes were not terminated.'
+}
+
+Start-Process -FilePath $installer -Wait -ArgumentList @(
+  '/MERGETASKS="addcontextmenufiles,addcontextmenufolders"'
+)
+Remove-Item -LiteralPath $installer
+```
+
+After installation, repeat the selected-task and AppX manifest inventory. The
+selected task list should include both context tasks while retaining every
+previous task. Reopen File Explorer if needed and verify **Open with Code**
+appears directly in the compact menu for a file, a folder, and folder
+background.
+
+#### Legacy classic-menu-only fallback
+
+Use this only when the official signed installer registration cannot be
+repaired. It does not provide Windows 11 compact-menu integration. Use the
+non-installer-owned key name `OpenWithVSCode` so the fallback is distinguishable
+from official registration:
 
 ```powershell
 $code = "$env:LOCALAPPDATA\Programs\Microsoft VS Code\Code.exe"
@@ -218,9 +314,9 @@ if (-not (Test-Path -LiteralPath $code)) {
 }
 
 $entries = @(
-  @{ Key = 'HKCU\Software\Classes\*\shell\VSCode'; Target = '%1' },
-  @{ Key = 'HKCU\Software\Classes\Directory\shell\VSCode'; Target = '%1' },
-  @{ Key = 'HKCU\Software\Classes\Directory\Background\shell\VSCode'; Target = '%V' }
+  @{ Key = 'HKCU\Software\Classes\*\shell\OpenWithVSCode'; Target = '%1' },
+  @{ Key = 'HKCU\Software\Classes\Directory\shell\OpenWithVSCode'; Target = '%1' },
+  @{ Key = 'HKCU\Software\Classes\Directory\Background\shell\OpenWithVSCode'; Target = '%V' }
 )
 foreach ($entry in $entries) {
   $command = '"{0}" "{1}"' -f $code, $entry.Target
@@ -230,8 +326,16 @@ foreach ($entry in $entries) {
 }
 ```
 
-On Windows 11, legacy shell commands normally appear under **Show more
-options** or `Shift+F10`. Reopen File Explorer after registration.
+Once the official compact-menu integration works, remove these fallback keys to
+avoid duplicate commands:
+
+```powershell
+@(
+  'HKCU\Software\Classes\*\shell\OpenWithVSCode',
+  'HKCU\Software\Classes\Directory\shell\OpenWithVSCode',
+  'HKCU\Software\Classes\Directory\Background\shell\OpenWithVSCode'
+) | ForEach-Object { reg.exe delete $_ /f 2>$null }
+```
 
 ## 4. Install the .NET SDK, C# tooling, and native compilers
 

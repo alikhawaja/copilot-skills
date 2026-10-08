@@ -6,9 +6,9 @@ description: >-
   pre-commit-compatible tooling, the latest stable .NET SDK, C# Dev Kit,
   native C/C++ compilers, PowerShell 7, Azure CLI, Azure PowerShell, and Docker.
   On Windows, also configures Explorer integration, Visual Studio Build Tools,
-  Windows Terminal, Hyper-V, WSL 2, and the latest Ubuntu LTS. Use when the user
-  asks to provision, bootstrap, configure, verify, or repair a development
-  machine.
+  Power BI Desktop, Windows Terminal, Hyper-V, WSL 2, and the latest Ubuntu LTS.
+  Use when the user asks to provision, bootstrap, configure, verify, or repair a
+  development machine.
 ---
 
 # Cross-platform developer machine setup
@@ -128,6 +128,8 @@ On Windows, also check:
 ```powershell
 py --list-paths
 wt --version
+winget list --exact --id Microsoft.PowerBI --source winget `
+  --accept-source-agreements
 wsl --status
 wsl --list --verbose
 ```
@@ -875,7 +877,71 @@ Get-Module Az -ListAvailable |
 If PSGallery is blocked, ask for the approved PowerShell repository. Do not
 permanently trust a substitute feed without confirmation.
 
-## 10. Install Docker
+## 10. Install Power BI Desktop on Windows
+
+Skip this section entirely on macOS and Linux. Power BI Desktop is supported on
+Windows only. On macOS or Linux, use the Power BI/Fabric web service or an
+organization-approved Windows VM or remote desktop; do not use unsupported
+compatibility-layer workarounds.
+
+Inventory the official Winget package before installing or upgrading it:
+
+```powershell
+$architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+if ($architecture -ne 'X64') {
+  Write-Warning "Detected $architecture. Confirm current Microsoft support for the x64 package and organization policy before installing."
+}
+
+winget list --exact --id Microsoft.PowerBI --source winget `
+  --accept-source-agreements
+winget show --exact --id Microsoft.PowerBI --source winget `
+  --accept-source-agreements
+```
+
+Prefer Microsoft's official `Microsoft.PowerBI` Winget package and its x64
+installer. Power BI Desktop is installed machine-wide, so Windows may display a
+UAC prompt and require administrator approval even when Winget runs silently.
+Explain the prompt immediately before installation and let the user approve it;
+do not attempt to bypass elevation or enterprise application-control policy.
+
+```powershell
+winget install --exact --id Microsoft.PowerBI --source winget `
+  --architecture x64 `
+  --accept-package-agreements --accept-source-agreements `
+  --disable-interactivity --silent
+```
+
+Verify both Winget ownership and the live executable product version rather
+than hardcoding a version from this document:
+
+```powershell
+winget list --exact --id Microsoft.PowerBI --source winget `
+  --accept-source-agreements
+
+$powerBIExe = @(
+  "$env:ProgramFiles\Microsoft Power BI Desktop\bin\PBIDesktop.exe",
+  "${env:ProgramFiles(x86)}\Microsoft Power BI Desktop\bin\PBIDesktop.exe"
+) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if (-not $powerBIExe) {
+  $powerBIExe = (Get-Command PBIDesktop.exe -ErrorAction SilentlyContinue).Source
+}
+if (-not $powerBIExe) {
+  throw 'PBIDesktop.exe was not found after installation.'
+}
+Get-Item -LiteralPath $powerBIExe |
+  Select-Object FullName,
+    @{Name='ProductVersion'; Expression={$_.VersionInfo.ProductVersion}},
+    @{Name='FileVersion'; Expression={$_.VersionInfo.FileVersion}}
+```
+
+First launch and sign-in are interactive. Power BI Desktop can create, open,
+transform, and model local reports without publishing them. Publishing and
+sharing require the appropriate Microsoft/Fabric/Power BI tenant access,
+workspace permissions, and licensing. Respect enterprise tenant policies and
+conditional-access requirements; never automate, store, or request user
+credentials in chat.
+
+## 11. Install Docker
 
 ### Windows
 
@@ -924,7 +990,7 @@ sudo usermod -aG docker "$USER"
 The user must log out and back in for group membership to apply. Rootless
 Docker is the preferred alternative when supported by the workload.
 
-## 11. Windows-only virtualization, WSL 2, and Ubuntu
+## 12. Windows-only virtualization, WSL 2, and Ubuntu
 
 Skip this section entirely on macOS and Linux.
 
@@ -1021,7 +1087,7 @@ wsl --list --verbose
 3. Start Docker Desktop, let the user accept its terms, select the WSL 2
    backend, and enable integration with the Ubuntu distribution.
 
-## 12. Final verification
+## 13. Final verification
 
 Run checks from a newly opened login shell so package-manager `PATH` changes are
 present.
@@ -1058,6 +1124,19 @@ docker run --rm hello-world
 ```powershell
 py --list-paths
 wt --version
+winget list --exact --id Microsoft.PowerBI --source winget --accept-source-agreements
+$powerBIExe = @(
+  "$env:ProgramFiles\Microsoft Power BI Desktop\bin\PBIDesktop.exe",
+  "${env:ProgramFiles(x86)}\Microsoft Power BI Desktop\bin\PBIDesktop.exe"
+) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if (-not $powerBIExe) {
+  $powerBIExe = (Get-Command PBIDesktop.exe -ErrorAction SilentlyContinue).Source
+}
+if (-not $powerBIExe) {
+  throw 'PBIDesktop.exe was not found.'
+}
+(Get-Item -LiteralPath $powerBIExe).VersionInfo |
+  Select-Object ProductVersion, FileVersion, FileName
 $installerDir = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
 $vswhere = Join-Path $installerDir 'vswhere.exe'
 $install = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath

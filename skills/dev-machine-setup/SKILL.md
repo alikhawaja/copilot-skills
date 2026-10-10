@@ -6,9 +6,9 @@ description: >-
   pre-commit-compatible tooling, the latest stable .NET SDK, C# Dev Kit,
   native C/C++ compilers, PowerShell 7, Azure CLI, Azure PowerShell, and Docker.
   On Windows, also configures Explorer integration, Visual Studio Build Tools,
-  Power BI Desktop, AMD Lemonade Server with stable ROCm-accelerated llama.cpp
-  local LLM serving on supported Ryzen AI systems, Windows Terminal, Hyper-V,
-  WSL 2, and the latest Ubuntu LTS.
+  Discord, Slack, Microsoft Teams, Power BI Desktop, AMD Lemonade Server with
+  stable ROCm-accelerated llama.cpp local LLM serving on supported Ryzen AI
+  systems, Windows Terminal, Hyper-V, WSL 2, and the latest Ubuntu LTS.
   Use when the user asks to provision, bootstrap, configure, verify, or repair a
   development machine.
 ---
@@ -136,6 +136,18 @@ winget list --exact --id Microsoft.PowerBI --source winget `
   --accept-source-agreements
 winget list --exact --id AMD.LemonadeServer --source winget `
   --accept-source-agreements
+$collaborationWingetIds = @(
+  'Discord.Discord',
+  'SlackTechnologies.Slack',
+  'Microsoft.Teams'
+)
+foreach ($id in $collaborationWingetIds) {
+  winget list --exact --id $id --accept-source-agreements
+}
+$collaborationAppxNames = @('91750D7E.Slack', 'MSTeams')
+$collaborationAppxNames | ForEach-Object { Get-AppxPackage -Name $_ } |
+  Select-Object Name, Version, Architecture, PackageFullName, InstallLocation,
+    SignatureKind, Status
 wsl --status
 wsl --list --verbose
 ```
@@ -883,7 +895,148 @@ Get-Module Az -ListAvailable |
 If PSGallery is blocked, ask for the approved PowerShell repository. Do not
 permanently trust a substitute feed without confirmation.
 
-## 10. Install Power BI Desktop on Windows
+## 10. Install collaboration applications
+
+### Windows
+
+Inventory both Winget registrations and AppX/MSIX/Microsoft Store packages
+before changing anything. Winget can recognize some Store packages, but its
+package ID alone does not prove that the installed application is the Win32 EXE
+variant. Keep the AppX inventory as the authoritative ownership check for
+Store/MSIX installations:
+
+```powershell
+$wingetIds = @(
+  'Discord.Discord',
+  'SlackTechnologies.Slack',
+  'Microsoft.Teams'
+)
+foreach ($id in $wingetIds) {
+  winget list --exact --id $id --accept-source-agreements
+  winget show --exact --id $id --source winget --accept-source-agreements
+}
+
+$storePackages = @('91750D7E.Slack', 'MSTeams') |
+  ForEach-Object { Get-AppxPackage -Name $_ }
+$storePackages |
+  Select-Object Name, Version, Architecture, PackageFullName, InstallLocation,
+    SignatureKind, Status
+```
+
+Use these official stable Winget IDs for applications that are genuinely
+missing:
+
+| Application | Winget ID | Store/AppX name |
+|---|---|---|
+| Discord | `Discord.Discord` | None expected |
+| Slack | `SlackTechnologies.Slack` | `91750D7E.Slack` |
+| Microsoft Teams | `Microsoft.Teams` | `MSTeams` |
+
+Discord may be disallowed by enterprise policy. Install it only when the user
+requested it or the organization approved it. Do not use Teams Classic or
+Teams Free unless the user explicitly requests that distinct product.
+
+An application is already present when either its healthy Winget-owned package
+or its healthy Store/AppX package is installed. In particular, do not install
+`SlackTechnologies.Slack` when `91750D7E.Slack` is healthy; doing so creates
+duplicate installations with separate update channels. Upgrade each application
+through the package manager or self-update channel that owns the installed
+copy. Slack and Teams catalog versions can lag versions delivered through their
+self-update or Microsoft Store channels. Never downgrade a newer healthy
+installation merely because `winget show` reports an older catalog version.
+
+Install only the missing applications, explicitly selecting stable x64
+packages:
+
+```powershell
+winget install --exact --id Discord.Discord --source winget `
+  --architecture x64 `
+  --accept-package-agreements --accept-source-agreements `
+  --disable-interactivity --silent
+winget install --exact --id SlackTechnologies.Slack --source winget `
+  --architecture x64 `
+  --accept-package-agreements --accept-source-agreements `
+  --disable-interactivity --silent
+winget install --exact --id Microsoft.Teams --source winget `
+  --architecture x64 `
+  --accept-package-agreements --accept-source-agreements `
+  --disable-interactivity --silent
+```
+
+Run only the command for an application confirmed missing after both
+inventories. Do not auto-launch the applications, add them to startup, or
+change existing startup settings.
+
+Verify package ownership and versions again. For AppX/MSIX applications, also
+resolve executable metadata from the signed package manifest. For Win32
+installations, inspect a discovered executable rather than assuming one fixed
+installation path:
+
+```powershell
+foreach ($id in $wingetIds) {
+  winget list --exact --id $id --accept-source-agreements
+}
+
+$storePackages = @('91750D7E.Slack', 'MSTeams') |
+  ForEach-Object { Get-AppxPackage -Name $_ }
+$storePackages |
+  Select-Object Name, Version, Architecture, PackageFullName, SignatureKind,
+    Status
+
+foreach ($package in $storePackages) {
+  $manifest = Get-AppxPackageManifest -Package $package
+  foreach ($application in $manifest.Package.Applications.Application) {
+    $relativeExecutable = [string]$application.Executable
+    if (-not $relativeExecutable) {
+      continue
+    }
+    $executable = Join-Path $package.InstallLocation $relativeExecutable
+    if (Test-Path -LiteralPath $executable) {
+      Get-Item -LiteralPath $executable |
+        Select-Object FullName,
+          @{Name='ProductVersion'; Expression={$_.VersionInfo.ProductVersion}},
+          @{Name='FileVersion'; Expression={$_.VersionInfo.FileVersion}}
+    }
+  }
+}
+
+$win32Executables = @(
+  Get-ChildItem "$env:LOCALAPPDATA\Discord\app-*\Discord.exe" `
+    -ErrorAction SilentlyContinue
+  Get-Item "$env:LOCALAPPDATA\slack\slack.exe" -ErrorAction SilentlyContinue
+  Get-Item "$env:ProgramFiles\Slack\slack.exe" -ErrorAction SilentlyContinue
+) | Sort-Object FullName -Unique
+$win32Executables |
+  Select-Object FullName,
+    @{Name='ProductVersion'; Expression={$_.VersionInfo.ProductVersion}},
+    @{Name='FileVersion'; Expression={$_.VersionInfo.FileVersion}}
+```
+
+Sign-in, tenant or workspace selection, MFA, microphone and camera permissions,
+notification preferences, and startup behavior are interactive user decisions.
+Never automate them or request credentials. Respect organization policy,
+application-control rules, and managed-device controls.
+
+### macOS
+
+Prefer the vendors' signed macOS installers. When Homebrew is already approved,
+its casks provide a concise package-manager path:
+
+```bash
+brew install --cask discord slack microsoft-teams
+```
+
+Inventory existing casks and `/Applications` first, avoid duplicates, and let
+the owning cask or application updater manage upgrades.
+
+### Linux
+
+Use Discord and Slack only from their official vendor package/repository or an
+organization-approved distribution source. Microsoft does not provide a
+supported Teams desktop client for Linux; use Teams on the web or install it as
+a browser PWA. Do not substitute arbitrary third-party Teams wrappers.
+
+## 11. Install Power BI Desktop on Windows
 
 Skip this section entirely on macOS and Linux. Power BI Desktop is supported on
 Windows only. On macOS or Linux, use the Power BI/Fabric web service or an
@@ -947,7 +1100,7 @@ workspace permissions, and licensing. Respect enterprise tenant policies and
 conditional-access requirements; never automate, store, or request user
 credentials in chat.
 
-## 11. Install AMD Lemonade Server on supported Windows Ryzen AI systems
+## 12. Install AMD Lemonade Server on supported Windows Ryzen AI systems
 
 This optimized Lemonade Server, ROCm, and llama.cpp procedure is Windows-only.
 Lemonade may support macOS and Linux, but do not run these Ryzen AI/ROCm Windows
@@ -1187,7 +1340,7 @@ official [Lemonade documentation](https://lemonade-server.ai/docs/), the
 [official source repository](https://github.com/lemonade-sdk/lemonade), and the
 live `lemonade --help` output.
 
-## 12. Install Docker
+## 13. Install Docker
 
 ### Windows
 
@@ -1236,7 +1389,7 @@ sudo usermod -aG docker "$USER"
 The user must log out and back in for group membership to apply. Rootless
 Docker is the preferred alternative when supported by the workload.
 
-## 13. Windows-only virtualization, WSL 2, and Ubuntu
+## 14. Windows-only virtualization, WSL 2, and Ubuntu
 
 Skip this section entirely on macOS and Linux.
 
@@ -1333,7 +1486,7 @@ wsl --list --verbose
 3. Start Docker Desktop, let the user accept its terms, select the WSL 2
    backend, and enable integration with the Ubuntu distribution.
 
-## 14. Final verification
+## 15. Final verification
 
 Run checks from a newly opened login shell so package-manager `PATH` changes are
 present.
@@ -1372,6 +1525,44 @@ py --list-paths
 wt --version
 winget list --exact --id Microsoft.PowerBI --source winget --accept-source-agreements
 winget list --exact --id AMD.LemonadeServer --source winget --accept-source-agreements
+$collaborationWingetIds = @(
+  'Discord.Discord',
+  'SlackTechnologies.Slack',
+  'Microsoft.Teams'
+)
+foreach ($id in $collaborationWingetIds) {
+  winget list --exact --id $id --accept-source-agreements
+}
+$collaborationStorePackages = @('91750D7E.Slack', 'MSTeams') |
+  ForEach-Object { Get-AppxPackage -Name $_ }
+$collaborationStorePackages |
+  Select-Object Name, Version, Architecture, PackageFullName, SignatureKind,
+    Status
+foreach ($package in $collaborationStorePackages) {
+  $manifest = Get-AppxPackageManifest -Package $package
+  foreach ($application in $manifest.Package.Applications.Application) {
+    $relativeExecutable = [string]$application.Executable
+    if ($relativeExecutable) {
+      $executable = Join-Path $package.InstallLocation $relativeExecutable
+      if (Test-Path -LiteralPath $executable) {
+        Get-Item -LiteralPath $executable |
+          Select-Object FullName,
+            @{Name='ProductVersion'; Expression={$_.VersionInfo.ProductVersion}},
+            @{Name='FileVersion'; Expression={$_.VersionInfo.FileVersion}}
+      }
+    }
+  }
+}
+$collaborationWin32Executables = @(
+  Get-ChildItem "$env:LOCALAPPDATA\Discord\app-*\Discord.exe" `
+    -ErrorAction SilentlyContinue
+  Get-Item "$env:LOCALAPPDATA\slack\slack.exe" -ErrorAction SilentlyContinue
+  Get-Item "$env:ProgramFiles\Slack\slack.exe" -ErrorAction SilentlyContinue
+) | Sort-Object FullName -Unique
+$collaborationWin32Executables |
+  Select-Object FullName,
+    @{Name='ProductVersion'; Expression={$_.VersionInfo.ProductVersion}},
+    @{Name='FileVersion'; Expression={$_.VersionInfo.FileVersion}}
 lemonade --version
 lemonade status
 lemonade config

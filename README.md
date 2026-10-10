@@ -72,6 +72,8 @@ Sets up or repairs a Windows, macOS, or Linux developer machine with:
 - Python 3.14 and 3.13, uv, Ruff, Pyright, and pre-commit-compatible tooling
 - PowerShell 7, Azure CLI, and Azure PowerShell
 - Docker Desktop on Windows/macOS or Docker Engine on Linux
+- Discord, Slack, and Microsoft Teams on Windows with duplicate-safe
+  Winget/Store inventory and ownership-aware updates
 - Microsoft Power BI Desktop on Windows
 - AMD Lemonade Server with stable ROCm and the latest supported llama.cpp build
   for local LLM serving on compatible Windows Ryzen AI hardware

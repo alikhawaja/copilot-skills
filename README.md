@@ -73,6 +73,8 @@ Sets up or repairs a Windows, macOS, or Linux developer machine with:
 - PowerShell 7, Azure CLI, and Azure PowerShell
 - Docker Desktop on Windows/macOS or Docker Engine on Linux
 - Microsoft Power BI Desktop on Windows
+- AMD Lemonade Server with stable ROCm and the latest supported llama.cpp build
+  for local LLM serving on compatible Windows Ryzen AI hardware
 - Official Windows 11 compact Explorer context-menu integration, Visual Studio
   Build Tools, Windows Terminal, Hyper-V, WSL 2, and Ubuntu LTS on Windows
 

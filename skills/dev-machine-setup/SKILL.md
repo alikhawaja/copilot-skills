@@ -6,7 +6,9 @@ description: >-
   pre-commit-compatible tooling, the latest stable .NET SDK, C# Dev Kit,
   native C/C++ compilers, PowerShell 7, Azure CLI, Azure PowerShell, and Docker.
   On Windows, also configures Explorer integration, Visual Studio Build Tools,
-  Power BI Desktop, Windows Terminal, Hyper-V, WSL 2, and the latest Ubuntu LTS.
+  Power BI Desktop, AMD Lemonade Server with stable ROCm-accelerated llama.cpp
+  local LLM serving on supported Ryzen AI systems, Windows Terminal, Hyper-V,
+  WSL 2, and the latest Ubuntu LTS.
   Use when the user asks to provision, bootstrap, configure, verify, or repair a
   development machine.
 ---
@@ -121,6 +123,8 @@ PowerShell:       pwsh --version
 Azure:            az version
 Azure PowerShell: pwsh -NoProfile -Command "Get-Module Az -ListAvailable"
 Docker:           docker version
+Local AI:         lemonade --version; lemonade status; lemonade config
+                  lemonade backends --all
 ```
 
 On Windows, also check:
@@ -129,6 +133,8 @@ On Windows, also check:
 py --list-paths
 wt --version
 winget list --exact --id Microsoft.PowerBI --source winget `
+  --accept-source-agreements
+winget list --exact --id AMD.LemonadeServer --source winget `
   --accept-source-agreements
 wsl --status
 wsl --list --verbose
@@ -941,7 +947,247 @@ workspace permissions, and licensing. Respect enterprise tenant policies and
 conditional-access requirements; never automate, store, or request user
 credentials in chat.
 
-## 11. Install Docker
+## 11. Install AMD Lemonade Server on supported Windows Ryzen AI systems
+
+This optimized Lemonade Server, ROCm, and llama.cpp procedure is Windows-only.
+Lemonade may support macOS and Linux, but do not run these Ryzen AI/ROCm Windows
+commands on those platforms. On Windows, first confirm that the AMD processor,
+GPU, NPU, and drivers are supported by the current official Lemonade and ROCm
+documentation. Do not assume every AMD system is eligible.
+
+### Inventory hardware, drivers, and usable memory
+
+Inventory the exact CPU and GPU names. Do not infer a higher-tier processor from
+the GPU or NPU family; for example, report an AMD Ryzen AI 7 PRO 350 as that
+exact model, not as a Ryzen AI 370.
+
+```powershell
+$cpu = Get-CimInstance Win32_Processor |
+  Select-Object Name, Manufacturer, NumberOfCores, NumberOfLogicalProcessors
+$gpu = Get-CimInstance Win32_VideoController |
+  Select-Object Name, DriverVersion, PNPDeviceID, AdapterRAM
+$npu = Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |
+  Where-Object {
+    $_.FriendlyName -match 'NPU|Neural|AMD IPU|Ryzen AI'
+  } |
+  Select-Object Status, Class, FriendlyName, InstanceId
+
+$npuDrivers = foreach ($device in $npu) {
+  $driver = Get-PnpDeviceProperty -InstanceId $device.InstanceId `
+    -KeyName 'DEVPKEY_Device_DriverVersion' -ErrorAction SilentlyContinue
+  [pscustomobject]@{
+    Status = $device.Status
+    Name = $device.FriendlyName
+    DriverVersion = $driver.Data
+  }
+}
+
+$dimms = Get-CimInstance Win32_PhysicalMemory
+$physicalBytes = ($dimms | Measure-Object Capacity -Sum).Sum
+$computerBytes = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory
+$os = Get-CimInstance Win32_OperatingSystem
+[pscustomobject]@{
+  PhysicalDimmGiB = [math]::Round($physicalBytes / 1GB, 2)
+  ComputerSystemGiB = [math]::Round($computerBytes / 1GB, 2)
+  OsVisibleGiB = [math]::Round(($os.TotalVisibleMemorySize * 1KB) / 1GB, 2)
+  OsFreeGiB = [math]::Round(($os.FreePhysicalMemory * 1KB) / 1GB, 2)
+}
+
+$cpu
+$gpu
+$npuDrivers
+$dimms | Select-Object Manufacturer, PartNumber, Capacity, Speed
+```
+
+Inspect both the physical DIMM total and OS-visible memory. AMD Variable
+Graphics Memory can reserve unified memory for the iGPU: reserving 32 GB on a
+64 GB system can enable larger GPU-resident models while leaving Windows only
+about 32 GB visible. `Win32_OperatingSystem.TotalVisibleMemorySize` therefore
+does not represent the installed DIMM total, and `AdapterRAM` is not a reliable
+measure of the full unified-memory reservation. Explain this tradeoff before
+asking the user to change firmware or AMD Software memory settings.
+
+### Install or upgrade the official package
+
+Use the official `AMD.LemonadeServer` Winget package. Inspect its publisher and
+source before installation; do not use an arbitrary public mirror or manually
+replace backend binaries while Lemonade's backend manager works.
+
+```powershell
+winget show --exact --id AMD.LemonadeServer --source winget `
+  --accept-source-agreements
+
+$installed = winget list --exact --id AMD.LemonadeServer --source winget `
+  --accept-source-agreements
+if ($LASTEXITCODE -eq 0 -and
+    $installed -match 'AMD\.LemonadeServer') {
+  winget upgrade --exact --id AMD.LemonadeServer --source winget `
+    --accept-package-agreements --accept-source-agreements `
+    --disable-interactivity --silent
+}
+else {
+  winget install --exact --id AMD.LemonadeServer --source winget `
+    --accept-package-agreements --accept-source-agreements `
+    --disable-interactivity --silent
+}
+```
+
+Open a fresh PowerShell session, start Lemonade Server from its installed app if
+it is not already running, and verify the CLI and local service:
+
+```powershell
+lemonade --version
+lemonade status
+lemonade config
+lemonade backends --all
+```
+
+The default server endpoint is `http://localhost:13305`. Preserve the user's
+telemetry preference: inspect it with `lemonade config` and never silently
+enable telemetry.
+
+### Configure stable ROCm and update the managed llama.cpp backend
+
+For a supported Ryzen AI iGPU, prefer the stable ROCm channel. Use Vulkan as the
+fallback if ROCm is unsupported or fails validation. Do not select the
+experimental nightly channel by default. While the server is connected, set
+the desired configuration before unloading the final model:
+
+```powershell
+lemonade config set rocm_channel=stable rocm_install_method=auto `
+  llamacpp.backend=rocm llamacpp.rocm_bin=latest `
+  inhibit_suspend=true max_loaded_models=1
+lemonade config
+```
+
+`latest` deliberately resolves the current official stable llama.cpp build; do
+not hardcode a build such as `b11513` as permanently latest. Record the build
+that Lemonade actually resolves.
+
+Unload all models before replacing backend files, then reinstall only the
+Lemonade-managed ROCm backend:
+
+```powershell
+lemonade unload
+lemonade backends uninstall llamacpp:rocm
+lemonade backends install llamacpp:rocm
+```
+
+Unloading the last model can briefly drop the server connection. This is why
+the configuration is written first. Wait for `lemonade status` to succeed,
+then verify and reapply the desired values if necessary:
+
+```powershell
+lemonade status
+lemonade config set rocm_channel=stable rocm_install_method=auto `
+  llamacpp.backend=rocm llamacpp.rocm_bin=latest `
+  inhibit_suspend=true max_loaded_models=1
+lemonade config
+lemonade backends --all
+
+$versionRoots = @(
+  "$env:USERPROFILE\.cache\lemonade\bin\llamacpp\rocm-stable",
+  "$env:USERPROFILE\.cache\lemonade\bin\therock"
+)
+Get-ChildItem $versionRoots -Filter version.txt -File -Recurse `
+  -ErrorAction SilentlyContinue |
+  Select-Object FullName,
+    @{Name='Version'; Expression={
+      (Get-Content -LiteralPath $_.FullName -Raw).Trim()
+    }}
+```
+
+The backend listing and `version.txt` files should identify the resolved
+llama.cpp build and Lemonade-managed ROCm runtime. Confirm that the reported GPU
+architecture matches the inventory; for example, a Radeon 860M in a Ryzen AI 7
+PRO 350 system reports `gfx1152`.
+
+### Choose the model recipe and context deliberately
+
+Do not redirect NPU-specific models to ROCm:
+
+- GGUF models with the `llamacpp` recipe can use the ROCm backend.
+- Models with the `ryzenai-llm` or `flm` recipe use the XDNA2 NPU and should
+  remain on their NPU backend.
+
+Choose a context size from current OS-visible free memory, model size,
+quantization, runtime overhead, and the configured iGPU reservation. Start
+conservatively and increase only after a successful load and inference request;
+do not hardcode 8192 for every machine or model.
+
+```powershell
+$model = '<downloaded-GGUF-llamacpp-model-name>'
+$contextSize = <conservative-context-size-for-current-free-memory>
+lemonade load $model --llamacpp rocm --ctx-size $contextSize --save-options
+lemonade status
+```
+
+As a verified example rather than a guarantee, a 64 GB Ryzen AI 7 PRO 350
+system with 32 GB reserved for its Radeon 860M loaded the 17.2 GB
+`Qwen3.8-27B-GGUF` model through llama.cpp/ROCm at 8192 context and measured
+about 4.0 tokens/second, or 240 tokens/minute, on a long-output test. Different
+models, quantizations, context sizes, drivers, thermals, and memory reservations
+will produce different results.
+
+### Verify the local OpenAI-compatible API
+
+Keep the default `localhost` binding. The local smoke test needs no credentials
+when the server has no API key configured:
+
+```powershell
+$baseUri = 'http://localhost:13305'
+$loadedModelName = '<loaded-model-name>'
+foreach ($prefix in @('/v1', '/api/v1')) {
+  $models = Invoke-RestMethod -Method Get -Uri "$baseUri$prefix/models"
+  $model = $models.data |
+    Where-Object id -eq $loadedModelName |
+    Select-Object -First 1
+  if (-not $model) {
+    throw "The expected loaded model was not returned by $prefix/models."
+  }
+
+  $body = @{
+    model = $model.id
+    messages = @(
+      @{ role = 'user'; content = 'Reply with exactly: lemonade-ok' }
+    )
+    stream = $false
+    max_tokens = 128
+  } | ConvertTo-Json -Depth 5
+
+  $response = Invoke-RestMethod -Method Post `
+    -Uri "$baseUri$prefix/chat/completions" `
+    -ContentType 'application/json' -Body $body
+  [pscustomobject]@{
+    Prefix = $prefix
+    Content = $response.choices[0].message.content
+  }
+}
+```
+
+Do not expose port `13305` broadly or change the host to all interfaces without
+explicit consent and an API key, host firewall rules, and appropriate network
+access controls.
+
+For optional repeatable measurements, use the built-in benchmark command and
+save JSON output:
+
+```powershell
+lemonade bench $loadedModelName --backend rocm --ctx-size $contextSize `
+  --runs 3 --warmup 1 --json --output .\lemonade-benchmark.json
+```
+
+Run benchmarks on AC power and use the user's approved performance mode to
+reduce power and thermal variability. Do not permanently change the Windows
+power plan without consent. Convert reported generation throughput with
+`tokens/minute = tokens/second * 60`.
+
+Before applying this procedure, verify current support and syntax against the
+official [Lemonade documentation](https://lemonade-server.ai/docs/), the
+[official source repository](https://github.com/lemonade-sdk/lemonade), and the
+live `lemonade --help` output.
+
+## 12. Install Docker
 
 ### Windows
 
@@ -990,7 +1236,7 @@ sudo usermod -aG docker "$USER"
 The user must log out and back in for group membership to apply. Rootless
 Docker is the preferred alternative when supported by the workload.
 
-## 12. Windows-only virtualization, WSL 2, and Ubuntu
+## 13. Windows-only virtualization, WSL 2, and Ubuntu
 
 Skip this section entirely on macOS and Linux.
 
@@ -1087,7 +1333,7 @@ wsl --list --verbose
 3. Start Docker Desktop, let the user accept its terms, select the WSL 2
    backend, and enable integration with the Ubuntu distribution.
 
-## 13. Final verification
+## 14. Final verification
 
 Run checks from a newly opened login shell so package-manager `PATH` changes are
 present.
@@ -1125,6 +1371,11 @@ docker run --rm hello-world
 py --list-paths
 wt --version
 winget list --exact --id Microsoft.PowerBI --source winget --accept-source-agreements
+winget list --exact --id AMD.LemonadeServer --source winget --accept-source-agreements
+lemonade --version
+lemonade status
+lemonade config
+lemonade backends --all
 $powerBIExe = @(
   "$env:ProgramFiles\Microsoft Power BI Desktop\bin\PBIDesktop.exe",
   "${env:ProgramFiles(x86)}\Microsoft Power BI Desktop\bin\PBIDesktop.exe"
@@ -1157,6 +1408,10 @@ clang --version
 system_profiler SPSoftwareDataType
 ```
 
+Do not run the Windows Ryzen AI/ROCm Lemonade optimization procedure on macOS.
+If Lemonade is requested, follow its current official macOS guidance and use
+the supported Metal backend.
+
 ### Linux additions
 
 ```bash
@@ -1166,6 +1421,10 @@ systemctl is-enabled docker
 systemctl is-active docker
 id
 ```
+
+Do not run the Windows Ryzen AI/ROCm Lemonade optimization procedure on Linux.
+If Lemonade is requested, follow its current official Linux and ROCm guidance
+for the exact distribution and supported hardware.
 
 Report exact installed versions, package sources, policy restrictions, reboot
 or re-login requirements, and interactive first-run steps. Distinguish

@@ -6,16 +6,13 @@ param(
     [ValidatePattern('^[0-9a-fA-F-]{36}$')][string]$UserObjectId,
     [ValidateRange(1, 365)][int]$RetentionDays = 14,
     [ValidateRange(1, 90)][int]$ObservationDays = 7,
+    [ValidateSet('GrantAccess', 'EnableFlowLogs')][string]$Mode,
     [switch]$PlanOnly
 )
 
 $ErrorActionPreference = 'Stop'
 $rgName = 'rg-azure-migration-assessment'
 $roleName = 'Azure Migration Flow Log Operator'
-if ($RetentionDays -le $ObservationDays) {
-    throw 'RetentionDays must exceed ObservationDays so early logs remain available for analysis.'
-}
-
 function Get-AzJson {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
     $output = & az @Arguments --only-show-errors --output json
@@ -68,6 +65,109 @@ foreach ($id in $SubscriptionIds) {
 }
 if (-not $UserObjectId) { $UserObjectId = Read-Host 'Microsoft Entra user object ID (GUID) to grant access' }
 if ($UserObjectId -notmatch '^[0-9a-fA-F-]{36}$') { throw 'Enter a user object ID GUID, not an email address.' }
+if (-not $Mode) {
+    $choice = Read-Host 'Choose 1 = grant assessment read access only (default), 2 = set up flow logs'
+    $Mode = switch ($choice) {
+        { $_ -in @('', '1') } { 'GrantAccess'; break }
+        '2' { 'EnableFlowLogs'; break }
+        default { throw 'Choose 1 or 2; no Azure changes made.' }
+    }
+}
+if ($Mode -eq 'EnableFlowLogs' -and $RetentionDays -le $ObservationDays) {
+    throw 'RetentionDays must exceed ObservationDays so early logs remain available for analysis.'
+}
+
+if ($Mode -eq 'GrantAccess') {
+    $readPlans = @()
+    $gaps = @()
+    foreach ($id in $SubscriptionIds) {
+        $watchers = @(Get-AzJson @('network', 'watcher', 'list', '--subscription', $id))
+        $stores = @()
+        $workspaces = @()
+        $knownWorkspaces = $null
+        foreach ($watcher in $watchers) {
+            $logs = @(Get-AzJson @('network', 'watcher', 'flow-log', 'list',
+                '--location', $watcher.location, '--subscription', $id))
+            foreach ($log in $logs) {
+                $target = $log.targetResourceId
+                if (-not $target) { $target = $log.properties.targetResourceId }
+                if ($target -notmatch '(?i)/providers/Microsoft.Network/virtualNetworks/') { continue }
+                $storageId = $log.storageId
+                if (-not $storageId) { $storageId = $log.properties.storageId }
+                if (-not $storageId -or $storageId -notmatch '(?i)^/subscriptions/([^/]+)/resourceGroups/[^/]+/providers/Microsoft.Storage/storageAccounts/[^/]+$') {
+                    $gaps += "Missing or invalid storage destination for flow log $($log.name) in $id"
+                    continue
+                }
+                $storeSub = $Matches[1]
+                if ($storeSub -notin $SubscriptionIds) {
+                    $gaps += "Flow log $($log.name) uses $storageId outside the selected subscriptions; arrange separate access"
+                } else { $stores += $storageId }
+                $analytics = $log.flowAnalyticsConfiguration.networkWatcherFlowAnalyticsConfiguration
+                if (-not $analytics) {
+                    $analytics = $log.properties.flowAnalyticsConfiguration.networkWatcherFlowAnalyticsConfiguration
+                }
+                if ($analytics.enabled -eq $true) {
+                    $workspaceId = $analytics.workspaceResourceId
+                    if (-not $workspaceId) {
+                        if ($null -eq $knownWorkspaces) {
+                            $knownWorkspaces = @()
+                            foreach ($workspaceSub in $SubscriptionIds) {
+                                $knownWorkspaces += @(Get-AzJson @('monitor', 'log-analytics',
+                                    'workspace', 'list', '--subscription', $workspaceSub))
+                            }
+                        }
+                        $workspaceId = @($knownWorkspaces | Where-Object {
+                            $_.customerId -eq $analytics.workspaceId
+                        } | Select-Object -First 1).id
+                    }
+                    if ($workspaceId -match '(?i)^/subscriptions/([^/]+)/' -and
+                        $Matches[1] -in $SubscriptionIds) {
+                        $workspaces += $workspaceId
+                    } else {
+                        $gaps += "Traffic Analytics workspace for flow log $($log.name) is unknown or outside selected subscriptions"
+                    }
+                }
+            }
+        }
+        $readPlans += [pscustomobject]@{
+            Subscription = $id
+            Stores = @($stores | Select-Object -Unique)
+            Workspaces = @($workspaces | Select-Object -Unique)
+        }
+    }
+    Write-Host "`nREAD-ACCESS PLAN - No changes have been made."
+    Write-Host "Tenant: $TenantId; assignee (Entra user object ID): $UserObjectId"
+    foreach ($p in $readPlans) {
+        Write-Host "Reader on subscription $($p.Subscription)"
+        foreach ($storeId in $p.Stores) { Write-Host "Storage Blob Data Reader on $storeId" }
+        foreach ($workspaceId in $p.Workspaces) { Write-Host "Log Analytics Reader on $workspaceId" }
+    }
+    foreach ($gap in $gaps) { Write-Warning "ACCESS GAP: $gap" }
+    Write-Host 'No custom role, resource group, storage, provider registration, or flow-log changes will be made.'
+    Write-Host 'Existing log ingestion, storage network restrictions and effective data access still need verification.'
+    if ($PlanOnly) { return }
+    $confirmation = Read-Host "Type GRANT READ ACCESS TO $($SubscriptionIds.Count) SUBSCRIPTIONS to assign these roles"
+    if ($confirmation -cne "GRANT READ ACCESS TO $($SubscriptionIds.Count) SUBSCRIPTIONS") {
+        throw 'Confirmation not given; no Azure changes made.'
+    }
+    foreach ($p in $readPlans) {
+        Ensure-Assignment $p.Subscription "/subscriptions/$($p.Subscription)" 'Reader' $UserObjectId
+        foreach ($storeId in $p.Stores) {
+            $storeSub = ($storeId -split '/')[2]
+            Ensure-Assignment $storeSub $storeId 'Storage Blob Data Reader' $UserObjectId
+        }
+        foreach ($workspaceId in $p.Workspaces) {
+            $workspaceSub = ($workspaceId -split '/')[2]
+            Ensure-Assignment $workspaceSub $workspaceId 'Log Analytics Reader' $UserObjectId
+        }
+    }
+    if ($gaps.Count) {
+        Write-Warning "Read access assigned within the selected subscriptions, but $($gaps.Count) flow-log access gap(s) remain; assessment coverage is incomplete."
+    } else {
+        Write-Host 'Read access assigned for identified in-scope flow-log destinations. Verify actual log-data access before analysis.'
+    }
+    return
+}
 
 # Inventory first. No Azure write occurs before the plan and explicit confirmation.
 $plans = @()
@@ -185,6 +285,9 @@ Write-Host "  + $ObservationDays day(s) observation + $($enableCount * 30)-$($en
 Write-Host "This does not grant access to external appliances, private application configuration, or workspaces outside the selected subscriptions."
 Write-Host "If a step fails, earlier changes are NOT rolled back. Do not rerun before reviewing the partial state."
 if ($PlanOnly) { return }
+if ($enableCount -eq 0) {
+    throw 'All discovered VNets already have enabled flow logs. Use -Mode GrantAccess to assign read access without creating assessment resources.'
+}
 $confirmation = Read-Host "Type ENABLE ALL $enableCount VNETS to create resources, assign roles and enable logs"
 if ($confirmation -cne "ENABLE ALL $enableCount VNETS") { throw 'Confirmation not given; no Azure changes made.' }
 

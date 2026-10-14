@@ -15,19 +15,22 @@ source SKU and destination-allocation workbooks, monthly actual-cost reporting,
 design decisions, Microsoft program alignment, and final packages containing
 Excel workbooks, document PDFs, and a PPTX/PDF presentation. Editable Markdown
 and Mermaid sources live in `assets`, while rendered diagrams live in `images`.
-When VMs are present, the skill checks VNet flow-log coverage and permissions
-early, discloses gaps or a per-VNet capture/time/cost plan, and requires explicit
-approval before enabling any logging.
-
-**At the start of a migration assessment:** VM dependency discovery may miss
-traffic if VNet flow logs are absent or the discovery identity lacks access.
-After confirming the tenant and selected subscriptions, the skill checks VM
-coverage and effective permissions and reports the named gaps before detailed
-analysis. The optional customer-run
+Before findings review and final publication, the skill reconciles named
+cross-workload dependencies across the evidence register, both workload dossiers,
+overview and diagrams. It also traces each material design issue from observed
+evidence to a concrete recommendation, approval state and affected workload
+decision; unresolved gaps remain visible rather than being treated as resolved.
+After confirming the account, tenant and subscriptions, the skill first checks
+read-only permissions to access existing VNet flow logs. It reports **permissions
+found**, missing or unverified for the identified scopes, without starting flow
+discovery or asking to enable logging. The assessment continues in all cases.
+When VM dependencies are investigated later, the skill identifies flow-log
+coverage, asks whether to analyze the available traffic, and requests separate
+approval before creating or re-enabling logs. Missing evidence leaves affected
+VM dependencies explicitly unverified. The optional customer-run
 [assessment flow-log script](https://raw.githubusercontent.com/alikhawaja/copilot-skills/main/skills/azure-dc2dc/Enable-AssessmentFlowLogs.ps1)
-previews **every VNet in explicitly selected subscriptions** before creating
-assessment resources, assigning scoped access to a specified Entra user object
-ID, and enabling missing flow logs. A customer administrator can download and
+offers **GrantAccess** (the default) or **EnableFlowLogs** for every VNet in
+explicitly selected subscriptions. A customer administrator can download and
 review the script, then run these commands in PowerShell 7 from the download
 directory (with Azure CLI installed):
 
@@ -35,16 +38,25 @@ directory (with Azure CLI installed):
 Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/alikhawaja/copilot-skills/main/skills/azure-dc2dc/Enable-AssessmentFlowLogs.ps1' -OutFile '.\Enable-AssessmentFlowLogs.ps1'
 # Review the saved script before running it.
 az login --tenant 00000000-0000-0000-0000-000000000000 # Replace with the customer tenant GUID
-pwsh -File .\Enable-AssessmentFlowLogs.ps1 -PlanOnly
-# Only after reviewing the full plan and obtaining approval:
-pwsh -File .\Enable-AssessmentFlowLogs.ps1
+pwsh -File .\Enable-AssessmentFlowLogs.ps1 -Mode GrantAccess -PlanOnly
+# Only after reviewing the read-access plan and obtaining approval:
+pwsh -File .\Enable-AssessmentFlowLogs.ps1 -Mode GrantAccess
+# For separate, customer-approved all-VNet logging, preview its plan first:
+pwsh -File .\Enable-AssessmentFlowLogs.ps1 -Mode EnableFlowLogs -PlanOnly
+# After separate logging approval:
+pwsh -File .\Enable-AssessmentFlowLogs.ps1 -Mode EnableFlowLogs
 ```
 
 The script prompts for the tenant GUID, **selected subscription GUIDs** and the
 assignee's Entra **user object ID** (not email). Check the plan's full VNet list,
 assessment resources, role scopes, charges, observation window, retention and
-cleanup arrangement; execution requires typing `ENABLE ALL <count> VNETS`.
-`-PlanOnly` makes no Azure changes. The administrator needs permission to create
+cleanup arrangement. `-PlanOnly` makes no Azure changes. GrantAccess requires
+typing `GRANT READ ACCESS TO <count> SUBSCRIPTIONS`; it grants subscription
+Reader and data-reader access on identified, in-scope existing log destinations
+(and relevant Traffic Analytics workspaces), without creating a custom role,
+resources or logs. External destinations are reported as unresolved gaps.
+EnableFlowLogs requires typing `ENABLE ALL <count> VNETS`. For that mode the
+administrator needs permission to create
 resource groups, storage accounts, custom role definitions and assignments,
 provider registrations, Network Watcher resources, and flow logs. It reuses
 existing enabled flow logs, creates `rg-azure-migration-assessment` per selected

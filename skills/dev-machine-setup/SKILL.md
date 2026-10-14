@@ -6,9 +6,11 @@ description: >-
   pre-commit-compatible tooling, the latest stable .NET SDK, C# Dev Kit,
   native C/C++ compilers, PowerShell 7, Azure CLI, Azure PowerShell, and Docker.
   On Windows, also configures Explorer integration, Visual Studio Build Tools,
-  Windows Terminal, Hyper-V, WSL 2, and the latest Ubuntu LTS. Use when the user
-  asks to provision, bootstrap, configure, verify, or repair a development
-  machine.
+  Discord, Slack, Microsoft Teams, Power BI Desktop, AMD Lemonade Server with
+  stable ROCm-accelerated llama.cpp local LLM serving on supported Ryzen AI
+  systems, Windows Terminal, Hyper-V, WSL 2, and the latest Ubuntu LTS.
+  Use when the user asks to provision, bootstrap, configure, verify, or repair a
+  development machine.
 ---
 
 # Cross-platform developer machine setup
@@ -121,6 +123,8 @@ PowerShell:       pwsh --version
 Azure:            az version
 Azure PowerShell: pwsh -NoProfile -Command "Get-Module Az -ListAvailable"
 Docker:           docker version
+Local AI:         lemonade --version; lemonade status; lemonade config
+                  lemonade backends --all
 ```
 
 On Windows, also check:
@@ -128,6 +132,22 @@ On Windows, also check:
 ```powershell
 py --list-paths
 wt --version
+winget list --exact --id Microsoft.PowerBI --source winget `
+  --accept-source-agreements
+winget list --exact --id AMD.LemonadeServer --source winget `
+  --accept-source-agreements
+$collaborationWingetIds = @(
+  'Discord.Discord',
+  'SlackTechnologies.Slack',
+  'Microsoft.Teams'
+)
+foreach ($id in $collaborationWingetIds) {
+  winget list --exact --id $id --accept-source-agreements
+}
+$collaborationAppxNames = @('91750D7E.Slack', 'MSTeams')
+$collaborationAppxNames | ForEach-Object { Get-AppxPackage -Name $_ } |
+  Select-Object Name, Version, Architecture, PackageFullName, InstallLocation,
+    SignatureKind, Status
 wsl --status
 wsl --list --verbose
 ```
@@ -192,24 +212,120 @@ forcing it can attempt to downgrade a built-in extension.
 
 ### Windows Explorer integration
 
-The VS Code user installer can be healthy while its optional Explorer commands
-are absent. Check all three per-user registrations before repairing them:
+On Windows 11, prefer the official Microsoft VS Code installer integration.
+The installer tasks `addcontextmenufiles` and `addcontextmenufolders` register
+the signed sparse AppX package `Microsoft.VisualStudioCode`. Its manifest uses
+`windows.fileExplorerContextMenus` for `Directory`,
+`Directory\Background`, and `*`, with verb `OpenWithCode` and CLSID
+`1C6DF0C0-192A-4451-BE36-6A59A86A692E`. This IExplorerCommand-style
+registration is what can place **Open with Code** directly in the Windows 11
+compact context menu. Plain `...\shell\...` registry verbs are legacy commands
+and normally appear only under **Show more options** or `Shift+F10`.
+
+Inventory the installed VS Code record and its selected Inno Setup tasks without
+changing anything:
 
 ```powershell
-$keys = @(
-  'Registry::HKEY_CURRENT_USER\Software\Classes\*\shell\VSCode',
-  'Registry::HKEY_CURRENT_USER\Software\Classes\Directory\shell\VSCode',
-  'Registry::HKEY_CURRENT_USER\Software\Classes\Directory\Background\shell\VSCode'
+$uninstallRoots = @(
+  'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+  'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+  'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
 )
-$keys | ForEach-Object {
-  [pscustomobject]@{ Key = $_; Present = Test-Path -LiteralPath $_ }
+$vscodeInstaller = Get-ChildItem $uninstallRoots -ErrorAction SilentlyContinue |
+  Get-ItemProperty |
+  Where-Object DisplayName -Like 'Microsoft Visual Studio Code*' |
+  Select-Object DisplayName, DisplayVersion, InstallLocation,
+    'Inno Setup: Selected Tasks', UninstallString
+$vscodeInstaller
+```
+
+Inspect the sparse package and the relevant manifest declarations:
+
+```powershell
+$package = Get-AppxPackage -Name Microsoft.VisualStudioCode
+$package | Select-Object Name, PackageFullName, InstallLocation, SignatureKind,
+  Status
+
+if ($package) {
+  $manifestPath = Join-Path $package.InstallLocation 'AppxManifest.xml'
+  [xml]$manifest = Get-Content -LiteralPath $manifestPath -Raw
+  $manifest.SelectNodes(
+    "//*[local-name()='Extension' and @Category='windows.fileExplorerContextMenus']"
+  ) | ForEach-Object {
+    [pscustomobject]@{
+      Category = $_.Category
+      XML = $_.OuterXml
+    }
+  }
 }
 ```
 
-Prefer reinstalling with the installer's file and folder context-menu tasks when
-doing a fresh interactive installation. To repair an existing per-user install
-without reinstalling, register only the missing entries under `HKCU`; never
-write them under `HKLM` unless the user requested machine-wide integration:
+The x64 and x86 Visual C++ redistributables may both be healthy while this menu
+integration is absent. Treat them as independent prerequisites, not evidence
+that either VS Code context-menu task is registered.
+
+An existing sparse package does not prove the optional installer tasks were
+selected. If either context-menu task is absent, repair the current user install
+with the latest Microsoft-signed **user installer** from the official VS Code
+update service. Do not downgrade merely because Winget's catalog trails VS
+Code's internal updater. Compare the installed version first, and use Winget
+only when it offers the same or a newer stable version.
+
+VS Code must be fully closed before rerunning its installer. Ask the user to
+close every VS Code window, then verify with:
+
+```powershell
+Get-Process Code -ErrorAction SilentlyContinue
+```
+
+Do not force-close VS Code or terminate its processes unless the user explicitly
+approves; unsaved editor state may be lost.
+
+Download the installer to a temporary file, verify Authenticode before running
+it, and merge the two tasks so all existing selections such as
+`associatewithfiles`, `addtopath`, and `runcode` remain enabled:
+
+```powershell
+$architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+$platform = switch ($architecture) {
+  'X64'   { 'win32-x64-user' }
+  'Arm64' { 'win32-arm64-user' }
+  default { throw "Unsupported VS Code user-installer architecture: $architecture" }
+}
+$installer = Join-Path $env:TEMP "VSCodeUserSetup-$architecture.exe"
+$uri = "https://update.code.visualstudio.com/latest/$platform/stable"
+Invoke-WebRequest -Uri $uri -OutFile $installer
+
+$signature = Get-AuthenticodeSignature -LiteralPath $installer
+if ($signature.Status -ne 'Valid' -or
+    $signature.SignerCertificate.Subject -notmatch 'Microsoft Corporation') {
+  throw "VS Code installer signature is not valid and Microsoft-signed: $($signature.Status)"
+}
+$signature | Select-Object Status,
+  @{Name='Signer'; Expression={$_.SignerCertificate.Subject}}
+
+if (Get-Process Code -ErrorAction SilentlyContinue) {
+  throw 'Close VS Code fully before rerunning the installer. Processes were not terminated.'
+}
+
+Start-Process -FilePath $installer -Wait -ArgumentList @(
+  '/MERGETASKS="addcontextmenufiles,addcontextmenufolders"'
+)
+Remove-Item -LiteralPath $installer
+```
+
+After installation, repeat the selected-task and AppX manifest inventory. The
+selected task list should include both context tasks while retaining every
+previous task. Reopen File Explorer if needed and verify **Open with Code**
+appears directly in the compact menu for a file, a folder, and folder
+background.
+
+#### Legacy classic-menu-only fallback
+
+Use this only when the official signed installer registration cannot be
+repaired. It does not provide Windows 11 compact-menu integration. Use the
+non-installer-owned key name `OpenWithVSCode` so the fallback is distinguishable
+from official registration:
 
 ```powershell
 $code = "$env:LOCALAPPDATA\Programs\Microsoft VS Code\Code.exe"
@@ -218,9 +334,9 @@ if (-not (Test-Path -LiteralPath $code)) {
 }
 
 $entries = @(
-  @{ Key = 'HKCU\Software\Classes\*\shell\VSCode'; Target = '%1' },
-  @{ Key = 'HKCU\Software\Classes\Directory\shell\VSCode'; Target = '%1' },
-  @{ Key = 'HKCU\Software\Classes\Directory\Background\shell\VSCode'; Target = '%V' }
+  @{ Key = 'HKCU\Software\Classes\*\shell\OpenWithVSCode'; Target = '%1' },
+  @{ Key = 'HKCU\Software\Classes\Directory\shell\OpenWithVSCode'; Target = '%1' },
+  @{ Key = 'HKCU\Software\Classes\Directory\Background\shell\OpenWithVSCode'; Target = '%V' }
 )
 foreach ($entry in $entries) {
   $command = '"{0}" "{1}"' -f $code, $entry.Target
@@ -230,8 +346,16 @@ foreach ($entry in $entries) {
 }
 ```
 
-On Windows 11, legacy shell commands normally appear under **Show more
-options** or `Shift+F10`. Reopen File Explorer after registration.
+Once the official compact-menu integration works, remove these fallback keys to
+avoid duplicate commands:
+
+```powershell
+@(
+  'HKCU\Software\Classes\*\shell\OpenWithVSCode',
+  'HKCU\Software\Classes\Directory\shell\OpenWithVSCode',
+  'HKCU\Software\Classes\Directory\Background\shell\OpenWithVSCode'
+) | ForEach-Object { reg.exe delete $_ /f 2>$null }
+```
 
 ## 4. Install the .NET SDK, C# tooling, and native compilers
 
@@ -771,7 +895,452 @@ Get-Module Az -ListAvailable |
 If PSGallery is blocked, ask for the approved PowerShell repository. Do not
 permanently trust a substitute feed without confirmation.
 
-## 10. Install Docker
+## 10. Install collaboration applications
+
+### Windows
+
+Inventory both Winget registrations and AppX/MSIX/Microsoft Store packages
+before changing anything. Winget can recognize some Store packages, but its
+package ID alone does not prove that the installed application is the Win32 EXE
+variant. Keep the AppX inventory as the authoritative ownership check for
+Store/MSIX installations:
+
+```powershell
+$wingetIds = @(
+  'Discord.Discord',
+  'SlackTechnologies.Slack',
+  'Microsoft.Teams'
+)
+foreach ($id in $wingetIds) {
+  winget list --exact --id $id --accept-source-agreements
+  winget show --exact --id $id --source winget --accept-source-agreements
+}
+
+$storePackages = @('91750D7E.Slack', 'MSTeams') |
+  ForEach-Object { Get-AppxPackage -Name $_ }
+$storePackages |
+  Select-Object Name, Version, Architecture, PackageFullName, InstallLocation,
+    SignatureKind, Status
+```
+
+Use these official stable Winget IDs for applications that are genuinely
+missing:
+
+| Application | Winget ID | Store/AppX name |
+|---|---|---|
+| Discord | `Discord.Discord` | None expected |
+| Slack | `SlackTechnologies.Slack` | `91750D7E.Slack` |
+| Microsoft Teams | `Microsoft.Teams` | `MSTeams` |
+
+Discord may be disallowed by enterprise policy. Install it only when the user
+requested it or the organization approved it. Do not use Teams Classic or
+Teams Free unless the user explicitly requests that distinct product.
+
+An application is already present when either its healthy Winget-owned package
+or its healthy Store/AppX package is installed. In particular, do not install
+`SlackTechnologies.Slack` when `91750D7E.Slack` is healthy; doing so creates
+duplicate installations with separate update channels. Upgrade each application
+through the package manager or self-update channel that owns the installed
+copy. Slack and Teams catalog versions can lag versions delivered through their
+self-update or Microsoft Store channels. Never downgrade a newer healthy
+installation merely because `winget show` reports an older catalog version.
+
+Install only the missing applications, explicitly selecting stable x64
+packages:
+
+```powershell
+winget install --exact --id Discord.Discord --source winget `
+  --architecture x64 `
+  --accept-package-agreements --accept-source-agreements `
+  --disable-interactivity --silent
+winget install --exact --id SlackTechnologies.Slack --source winget `
+  --architecture x64 `
+  --accept-package-agreements --accept-source-agreements `
+  --disable-interactivity --silent
+winget install --exact --id Microsoft.Teams --source winget `
+  --architecture x64 `
+  --accept-package-agreements --accept-source-agreements `
+  --disable-interactivity --silent
+```
+
+Run only the command for an application confirmed missing after both
+inventories. Do not auto-launch the applications, add them to startup, or
+change existing startup settings.
+
+Verify package ownership and versions again. For AppX/MSIX applications, also
+resolve executable metadata from the signed package manifest. For Win32
+installations, inspect a discovered executable rather than assuming one fixed
+installation path:
+
+```powershell
+foreach ($id in $wingetIds) {
+  winget list --exact --id $id --accept-source-agreements
+}
+
+$storePackages = @('91750D7E.Slack', 'MSTeams') |
+  ForEach-Object { Get-AppxPackage -Name $_ }
+$storePackages |
+  Select-Object Name, Version, Architecture, PackageFullName, SignatureKind,
+    Status
+
+foreach ($package in $storePackages) {
+  $manifest = Get-AppxPackageManifest -Package $package
+  foreach ($application in $manifest.Package.Applications.Application) {
+    $relativeExecutable = [string]$application.Executable
+    if (-not $relativeExecutable) {
+      continue
+    }
+    $executable = Join-Path $package.InstallLocation $relativeExecutable
+    if (Test-Path -LiteralPath $executable) {
+      Get-Item -LiteralPath $executable |
+        Select-Object FullName,
+          @{Name='ProductVersion'; Expression={$_.VersionInfo.ProductVersion}},
+          @{Name='FileVersion'; Expression={$_.VersionInfo.FileVersion}}
+    }
+  }
+}
+
+$win32Executables = @(
+  Get-ChildItem "$env:LOCALAPPDATA\Discord\app-*\Discord.exe" `
+    -ErrorAction SilentlyContinue
+  Get-Item "$env:LOCALAPPDATA\slack\slack.exe" -ErrorAction SilentlyContinue
+  Get-Item "$env:ProgramFiles\Slack\slack.exe" -ErrorAction SilentlyContinue
+) | Sort-Object FullName -Unique
+$win32Executables |
+  Select-Object FullName,
+    @{Name='ProductVersion'; Expression={$_.VersionInfo.ProductVersion}},
+    @{Name='FileVersion'; Expression={$_.VersionInfo.FileVersion}}
+```
+
+Sign-in, tenant or workspace selection, MFA, microphone and camera permissions,
+notification preferences, and startup behavior are interactive user decisions.
+Never automate them or request credentials. Respect organization policy,
+application-control rules, and managed-device controls.
+
+### macOS
+
+Prefer the vendors' signed macOS installers. When Homebrew is already approved,
+its casks provide a concise package-manager path:
+
+```bash
+brew install --cask discord slack microsoft-teams
+```
+
+Inventory existing casks and `/Applications` first, avoid duplicates, and let
+the owning cask or application updater manage upgrades.
+
+### Linux
+
+Use Discord and Slack only from their official vendor package/repository or an
+organization-approved distribution source. Microsoft does not provide a
+supported Teams desktop client for Linux; use Teams on the web or install it as
+a browser PWA. Do not substitute arbitrary third-party Teams wrappers.
+
+## 11. Install Power BI Desktop on Windows
+
+Skip this section entirely on macOS and Linux. Power BI Desktop is supported on
+Windows only. On macOS or Linux, use the Power BI/Fabric web service or an
+organization-approved Windows VM or remote desktop; do not use unsupported
+compatibility-layer workarounds.
+
+Inventory the official Winget package before installing or upgrading it:
+
+```powershell
+$architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+if ($architecture -ne 'X64') {
+  Write-Warning "Detected $architecture. Confirm current Microsoft support for the x64 package and organization policy before installing."
+}
+
+winget list --exact --id Microsoft.PowerBI --source winget `
+  --accept-source-agreements
+winget show --exact --id Microsoft.PowerBI --source winget `
+  --accept-source-agreements
+```
+
+Prefer Microsoft's official `Microsoft.PowerBI` Winget package and its x64
+installer. Power BI Desktop is installed machine-wide, so Windows may display a
+UAC prompt and require administrator approval even when Winget runs silently.
+Explain the prompt immediately before installation and let the user approve it;
+do not attempt to bypass elevation or enterprise application-control policy.
+
+```powershell
+winget install --exact --id Microsoft.PowerBI --source winget `
+  --architecture x64 `
+  --accept-package-agreements --accept-source-agreements `
+  --disable-interactivity --silent
+```
+
+Verify both Winget ownership and the live executable product version rather
+than hardcoding a version from this document:
+
+```powershell
+winget list --exact --id Microsoft.PowerBI --source winget `
+  --accept-source-agreements
+
+$powerBIExe = @(
+  "$env:ProgramFiles\Microsoft Power BI Desktop\bin\PBIDesktop.exe",
+  "${env:ProgramFiles(x86)}\Microsoft Power BI Desktop\bin\PBIDesktop.exe"
+) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if (-not $powerBIExe) {
+  $powerBIExe = (Get-Command PBIDesktop.exe -ErrorAction SilentlyContinue).Source
+}
+if (-not $powerBIExe) {
+  throw 'PBIDesktop.exe was not found after installation.'
+}
+Get-Item -LiteralPath $powerBIExe |
+  Select-Object FullName,
+    @{Name='ProductVersion'; Expression={$_.VersionInfo.ProductVersion}},
+    @{Name='FileVersion'; Expression={$_.VersionInfo.FileVersion}}
+```
+
+First launch and sign-in are interactive. Power BI Desktop can create, open,
+transform, and model local reports without publishing them. Publishing and
+sharing require the appropriate Microsoft/Fabric/Power BI tenant access,
+workspace permissions, and licensing. Respect enterprise tenant policies and
+conditional-access requirements; never automate, store, or request user
+credentials in chat.
+
+## 12. Install AMD Lemonade Server on supported Windows Ryzen AI systems
+
+This optimized Lemonade Server, ROCm, and llama.cpp procedure is Windows-only.
+Lemonade may support macOS and Linux, but do not run these Ryzen AI/ROCm Windows
+commands on those platforms. On Windows, first confirm that the AMD processor,
+GPU, NPU, and drivers are supported by the current official Lemonade and ROCm
+documentation. Do not assume every AMD system is eligible.
+
+### Inventory hardware, drivers, and usable memory
+
+Inventory the exact CPU and GPU names. Do not infer a higher-tier processor from
+the GPU or NPU family; for example, report an AMD Ryzen AI 7 PRO 350 as that
+exact model, not as a Ryzen AI 370.
+
+```powershell
+$cpu = Get-CimInstance Win32_Processor |
+  Select-Object Name, Manufacturer, NumberOfCores, NumberOfLogicalProcessors
+$gpu = Get-CimInstance Win32_VideoController |
+  Select-Object Name, DriverVersion, PNPDeviceID, AdapterRAM
+$npu = Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |
+  Where-Object {
+    $_.FriendlyName -match 'NPU|Neural|AMD IPU|Ryzen AI'
+  } |
+  Select-Object Status, Class, FriendlyName, InstanceId
+
+$npuDrivers = foreach ($device in $npu) {
+  $driver = Get-PnpDeviceProperty -InstanceId $device.InstanceId `
+    -KeyName 'DEVPKEY_Device_DriverVersion' -ErrorAction SilentlyContinue
+  [pscustomobject]@{
+    Status = $device.Status
+    Name = $device.FriendlyName
+    DriverVersion = $driver.Data
+  }
+}
+
+$dimms = Get-CimInstance Win32_PhysicalMemory
+$physicalBytes = ($dimms | Measure-Object Capacity -Sum).Sum
+$computerBytes = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory
+$os = Get-CimInstance Win32_OperatingSystem
+[pscustomobject]@{
+  PhysicalDimmGiB = [math]::Round($physicalBytes / 1GB, 2)
+  ComputerSystemGiB = [math]::Round($computerBytes / 1GB, 2)
+  OsVisibleGiB = [math]::Round(($os.TotalVisibleMemorySize * 1KB) / 1GB, 2)
+  OsFreeGiB = [math]::Round(($os.FreePhysicalMemory * 1KB) / 1GB, 2)
+}
+
+$cpu
+$gpu
+$npuDrivers
+$dimms | Select-Object Manufacturer, PartNumber, Capacity, Speed
+```
+
+Inspect both the physical DIMM total and OS-visible memory. AMD Variable
+Graphics Memory can reserve unified memory for the iGPU: reserving 32 GB on a
+64 GB system can enable larger GPU-resident models while leaving Windows only
+about 32 GB visible. `Win32_OperatingSystem.TotalVisibleMemorySize` therefore
+does not represent the installed DIMM total, and `AdapterRAM` is not a reliable
+measure of the full unified-memory reservation. Explain this tradeoff before
+asking the user to change firmware or AMD Software memory settings.
+
+### Install or upgrade the official package
+
+Use the official `AMD.LemonadeServer` Winget package. Inspect its publisher and
+source before installation; do not use an arbitrary public mirror or manually
+replace backend binaries while Lemonade's backend manager works.
+
+```powershell
+winget show --exact --id AMD.LemonadeServer --source winget `
+  --accept-source-agreements
+
+$installed = winget list --exact --id AMD.LemonadeServer --source winget `
+  --accept-source-agreements
+if ($LASTEXITCODE -eq 0 -and
+    $installed -match 'AMD\.LemonadeServer') {
+  winget upgrade --exact --id AMD.LemonadeServer --source winget `
+    --accept-package-agreements --accept-source-agreements `
+    --disable-interactivity --silent
+}
+else {
+  winget install --exact --id AMD.LemonadeServer --source winget `
+    --accept-package-agreements --accept-source-agreements `
+    --disable-interactivity --silent
+}
+```
+
+Open a fresh PowerShell session, start Lemonade Server from its installed app if
+it is not already running, and verify the CLI and local service:
+
+```powershell
+lemonade --version
+lemonade status
+lemonade config
+lemonade backends --all
+```
+
+The default server endpoint is `http://localhost:13305`. Preserve the user's
+telemetry preference: inspect it with `lemonade config` and never silently
+enable telemetry.
+
+### Configure stable ROCm and update the managed llama.cpp backend
+
+For a supported Ryzen AI iGPU, prefer the stable ROCm channel. Use Vulkan as the
+fallback if ROCm is unsupported or fails validation. Do not select the
+experimental nightly channel by default. While the server is connected, set
+the desired configuration before unloading the final model:
+
+```powershell
+lemonade config set rocm_channel=stable rocm_install_method=auto `
+  llamacpp.backend=rocm llamacpp.rocm_bin=latest `
+  inhibit_suspend=true max_loaded_models=1
+lemonade config
+```
+
+`latest` deliberately resolves the current official stable llama.cpp build; do
+not hardcode a build such as `b11513` as permanently latest. Record the build
+that Lemonade actually resolves.
+
+Unload all models before replacing backend files, then reinstall only the
+Lemonade-managed ROCm backend:
+
+```powershell
+lemonade unload
+lemonade backends uninstall llamacpp:rocm
+lemonade backends install llamacpp:rocm
+```
+
+Unloading the last model can briefly drop the server connection. This is why
+the configuration is written first. Wait for `lemonade status` to succeed,
+then verify and reapply the desired values if necessary:
+
+```powershell
+lemonade status
+lemonade config set rocm_channel=stable rocm_install_method=auto `
+  llamacpp.backend=rocm llamacpp.rocm_bin=latest `
+  inhibit_suspend=true max_loaded_models=1
+lemonade config
+lemonade backends --all
+
+$versionRoots = @(
+  "$env:USERPROFILE\.cache\lemonade\bin\llamacpp\rocm-stable",
+  "$env:USERPROFILE\.cache\lemonade\bin\therock"
+)
+Get-ChildItem $versionRoots -Filter version.txt -File -Recurse `
+  -ErrorAction SilentlyContinue |
+  Select-Object FullName,
+    @{Name='Version'; Expression={
+      (Get-Content -LiteralPath $_.FullName -Raw).Trim()
+    }}
+```
+
+The backend listing and `version.txt` files should identify the resolved
+llama.cpp build and Lemonade-managed ROCm runtime. Confirm that the reported GPU
+architecture matches the inventory; for example, a Radeon 860M in a Ryzen AI 7
+PRO 350 system reports `gfx1152`.
+
+### Choose the model recipe and context deliberately
+
+Do not redirect NPU-specific models to ROCm:
+
+- GGUF models with the `llamacpp` recipe can use the ROCm backend.
+- Models with the `ryzenai-llm` or `flm` recipe use the XDNA2 NPU and should
+  remain on their NPU backend.
+
+Choose a context size from current OS-visible free memory, model size,
+quantization, runtime overhead, and the configured iGPU reservation. Start
+conservatively and increase only after a successful load and inference request;
+do not hardcode 8192 for every machine or model.
+
+```powershell
+$model = '<downloaded-GGUF-llamacpp-model-name>'
+$contextSize = <conservative-context-size-for-current-free-memory>
+lemonade load $model --llamacpp rocm --ctx-size $contextSize --save-options
+lemonade status
+```
+
+As a verified example rather than a guarantee, a 64 GB Ryzen AI 7 PRO 350
+system with 32 GB reserved for its Radeon 860M loaded the 17.2 GB
+`Qwen3.8-27B-GGUF` model through llama.cpp/ROCm at 8192 context and measured
+about 4.0 tokens/second, or 240 tokens/minute, on a long-output test. Different
+models, quantizations, context sizes, drivers, thermals, and memory reservations
+will produce different results.
+
+### Verify the local OpenAI-compatible API
+
+Keep the default `localhost` binding. The local smoke test needs no credentials
+when the server has no API key configured:
+
+```powershell
+$baseUri = 'http://localhost:13305'
+$loadedModelName = '<loaded-model-name>'
+foreach ($prefix in @('/v1', '/api/v1')) {
+  $models = Invoke-RestMethod -Method Get -Uri "$baseUri$prefix/models"
+  $model = $models.data |
+    Where-Object id -eq $loadedModelName |
+    Select-Object -First 1
+  if (-not $model) {
+    throw "The expected loaded model was not returned by $prefix/models."
+  }
+
+  $body = @{
+    model = $model.id
+    messages = @(
+      @{ role = 'user'; content = 'Reply with exactly: lemonade-ok' }
+    )
+    stream = $false
+    max_tokens = 128
+  } | ConvertTo-Json -Depth 5
+
+  $response = Invoke-RestMethod -Method Post `
+    -Uri "$baseUri$prefix/chat/completions" `
+    -ContentType 'application/json' -Body $body
+  [pscustomobject]@{
+    Prefix = $prefix
+    Content = $response.choices[0].message.content
+  }
+}
+```
+
+Do not expose port `13305` broadly or change the host to all interfaces without
+explicit consent and an API key, host firewall rules, and appropriate network
+access controls.
+
+For optional repeatable measurements, use the built-in benchmark command and
+save JSON output:
+
+```powershell
+lemonade bench $loadedModelName --backend rocm --ctx-size $contextSize `
+  --runs 3 --warmup 1 --json --output .\lemonade-benchmark.json
+```
+
+Run benchmarks on AC power and use the user's approved performance mode to
+reduce power and thermal variability. Do not permanently change the Windows
+power plan without consent. Convert reported generation throughput with
+`tokens/minute = tokens/second * 60`.
+
+Before applying this procedure, verify current support and syntax against the
+official [Lemonade documentation](https://lemonade-server.ai/docs/), the
+[official source repository](https://github.com/lemonade-sdk/lemonade), and the
+live `lemonade --help` output.
+
+## 13. Install Docker
 
 ### Windows
 
@@ -820,7 +1389,7 @@ sudo usermod -aG docker "$USER"
 The user must log out and back in for group membership to apply. Rootless
 Docker is the preferred alternative when supported by the workload.
 
-## 11. Windows-only virtualization, WSL 2, and Ubuntu
+## 14. Windows-only virtualization, WSL 2, and Ubuntu
 
 Skip this section entirely on macOS and Linux.
 
@@ -917,7 +1486,7 @@ wsl --list --verbose
 3. Start Docker Desktop, let the user accept its terms, select the WSL 2
    backend, and enable integration with the Ubuntu distribution.
 
-## 12. Final verification
+## 15. Final verification
 
 Run checks from a newly opened login shell so package-manager `PATH` changes are
 present.
@@ -954,6 +1523,62 @@ docker run --rm hello-world
 ```powershell
 py --list-paths
 wt --version
+winget list --exact --id Microsoft.PowerBI --source winget --accept-source-agreements
+winget list --exact --id AMD.LemonadeServer --source winget --accept-source-agreements
+$collaborationWingetIds = @(
+  'Discord.Discord',
+  'SlackTechnologies.Slack',
+  'Microsoft.Teams'
+)
+foreach ($id in $collaborationWingetIds) {
+  winget list --exact --id $id --accept-source-agreements
+}
+$collaborationStorePackages = @('91750D7E.Slack', 'MSTeams') |
+  ForEach-Object { Get-AppxPackage -Name $_ }
+$collaborationStorePackages |
+  Select-Object Name, Version, Architecture, PackageFullName, SignatureKind,
+    Status
+foreach ($package in $collaborationStorePackages) {
+  $manifest = Get-AppxPackageManifest -Package $package
+  foreach ($application in $manifest.Package.Applications.Application) {
+    $relativeExecutable = [string]$application.Executable
+    if ($relativeExecutable) {
+      $executable = Join-Path $package.InstallLocation $relativeExecutable
+      if (Test-Path -LiteralPath $executable) {
+        Get-Item -LiteralPath $executable |
+          Select-Object FullName,
+            @{Name='ProductVersion'; Expression={$_.VersionInfo.ProductVersion}},
+            @{Name='FileVersion'; Expression={$_.VersionInfo.FileVersion}}
+      }
+    }
+  }
+}
+$collaborationWin32Executables = @(
+  Get-ChildItem "$env:LOCALAPPDATA\Discord\app-*\Discord.exe" `
+    -ErrorAction SilentlyContinue
+  Get-Item "$env:LOCALAPPDATA\slack\slack.exe" -ErrorAction SilentlyContinue
+  Get-Item "$env:ProgramFiles\Slack\slack.exe" -ErrorAction SilentlyContinue
+) | Sort-Object FullName -Unique
+$collaborationWin32Executables |
+  Select-Object FullName,
+    @{Name='ProductVersion'; Expression={$_.VersionInfo.ProductVersion}},
+    @{Name='FileVersion'; Expression={$_.VersionInfo.FileVersion}}
+lemonade --version
+lemonade status
+lemonade config
+lemonade backends --all
+$powerBIExe = @(
+  "$env:ProgramFiles\Microsoft Power BI Desktop\bin\PBIDesktop.exe",
+  "${env:ProgramFiles(x86)}\Microsoft Power BI Desktop\bin\PBIDesktop.exe"
+) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if (-not $powerBIExe) {
+  $powerBIExe = (Get-Command PBIDesktop.exe -ErrorAction SilentlyContinue).Source
+}
+if (-not $powerBIExe) {
+  throw 'PBIDesktop.exe was not found.'
+}
+(Get-Item -LiteralPath $powerBIExe).VersionInfo |
+  Select-Object ProductVersion, FileVersion, FileName
 $installerDir = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
 $vswhere = Join-Path $installerDir 'vswhere.exe'
 $install = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
@@ -974,6 +1599,10 @@ clang --version
 system_profiler SPSoftwareDataType
 ```
 
+Do not run the Windows Ryzen AI/ROCm Lemonade optimization procedure on macOS.
+If Lemonade is requested, follow its current official macOS guidance and use
+the supported Metal backend.
+
 ### Linux additions
 
 ```bash
@@ -983,6 +1612,10 @@ systemctl is-enabled docker
 systemctl is-active docker
 id
 ```
+
+Do not run the Windows Ryzen AI/ROCm Lemonade optimization procedure on Linux.
+If Lemonade is requested, follow its current official Linux and ROCm guidance
+for the exact distribution and supported hardware.
 
 Report exact installed versions, package sources, policy restrictions, reboot
 or re-login requirements, and interactive first-run steps. Distinguish

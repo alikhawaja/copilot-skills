@@ -4,11 +4,11 @@ description: >-
   Set up or repair a Windows, macOS, or Linux developer machine with VS Code,
   Git, GitHub SSH, GitHub Copilot CLI, Python 3.14 and 3.13, uv, Ruff, Pyright,
   pre-commit-compatible tooling, the latest stable .NET SDK, C# Dev Kit,
-  native C/C++ compilers, PowerShell 7, Azure CLI, Azure PowerShell, and Docker.
+  native C/C++ compilers, PowerShell 7, Azure CLI, Azure PowerShell, Docker,
+  and official Unsloth Desktop for local models on supported hardware.
   On Windows, also configures Explorer integration, Visual Studio Build Tools,
-  Discord, Slack, Microsoft Teams, Power BI Desktop, AMD Lemonade Server with
-  stable ROCm-accelerated llama.cpp local LLM serving on supported Ryzen AI
-  systems, Windows Terminal, Hyper-V, WSL 2, and the latest Ubuntu LTS.
+  Discord, Slack, Microsoft Teams, Power BI Desktop, Windows Terminal,
+  Hyper-V, WSL 2, and the latest Ubuntu LTS.
   Use when the user asks to provision, bootstrap, configure, verify, or repair a
   development machine.
 ---
@@ -123,8 +123,9 @@ PowerShell:       pwsh --version
 Azure:            az version
 Azure PowerShell: pwsh -NoProfile -Command "Get-Module Az -ListAvailable"
 Docker:           docker version
-Local AI:         lemonade --version; lemonade status; lemonade config
-                  lemonade backends --all
+Local AI:         Unsloth Desktop app version, package ownership, setup status,
+                  local model/format, selected backend, context, API binding
+                  unsloth --help only if a CLI is already present
 ```
 
 On Windows, also check:
@@ -134,7 +135,7 @@ py --list-paths
 wt --version
 winget list --exact --id Microsoft.PowerBI --source winget `
   --accept-source-agreements
-winget list --exact --id AMD.LemonadeServer --source winget `
+winget list --exact --id UnslothAI.Unsloth --source winget `
   --accept-source-agreements
 $collaborationWingetIds = @(
   'Discord.Discord',
@@ -1100,19 +1101,34 @@ workspace permissions, and licensing. Respect enterprise tenant policies and
 conditional-access requirements; never automate, store, or request user
 credentials in chat.
 
-## 12. Install AMD Lemonade Server on supported Windows Ryzen AI systems
+## 12. Install and configure Unsloth Desktop for local models
 
-This optimized Lemonade Server, ROCm, and llama.cpp procedure is Windows-only.
-Lemonade may support macOS and Linux, but do not run these Ryzen AI/ROCm Windows
-commands on those platforms. On Windows, first confirm that the AMD processor,
-GPU, NPU, and drivers are supported by the current official Lemonade and ROCm
-documentation. Do not assume every AMD system is eligible.
+Use **Unsloth Desktop**, the official native Windows/macOS/Linux application,
+as the default local-model interface. **Unsloth Studio** is the separately
+installed browser-based web UI; **Unsloth Core** is the Python training library.
+Installing `unsloth` with pip or running the Studio installer is not a Desktop
+installation. Do not add Studio, Core, CUDA, or ROCm merely to install Desktop.
+
+Official documentation and package catalogs checked on 2026-11-21 advertise
+Desktop as **beta**, including Winget `UnslothAI.Unsloth` and Homebrew cask
+`unsloth`. Disclose the beta status and confirm acceptance before installing;
+do not describe it as stable. Recheck the live catalog, release assets and
+platform requirements at execution time, rather than pinning today's version.
+
+Preserve existing Lemonade installs, services, models, caches, telemetry
+preferences, and client/provider configuration. Do not uninstall Lemonade,
+reuse its managed backend binaries, move runtime data, change GPU drivers,
+firmware, memory reservations, or power settings without separate approval.
+Updating this skill alone does not authorize installing Unsloth or downloading
+models. Read-only inventory must not start services or install backends.
 
 ### Inventory hardware, drivers, and usable memory
 
-Inventory the exact CPU and GPU names. Do not infer a higher-tier processor from
-the GPU or NPU family; for example, report an AMD Ryzen AI 7 PRO 350 as that
-exact model, not as a Ryzen AI 370.
+Record the exact CPU, GPU and NPU models, architecture, driver versions, free
+disk space, installed RAM, OS-visible/free RAM, and dedicated/shared GPU memory.
+Do not infer the CPU model from its GPU/NPU family or equate an NPU with CUDA.
+
+On Windows:
 
 ```powershell
 $cpu = Get-CimInstance Win32_Processor |
@@ -1158,187 +1174,259 @@ Graphics Memory can reserve unified memory for the iGPU: reserving 32 GB on a
 about 32 GB visible. `Win32_OperatingSystem.TotalVisibleMemorySize` therefore
 does not represent the installed DIMM total, and `AdapterRAM` is not a reliable
 measure of the full unified-memory reservation. Explain this tradeoff before
-asking the user to change firmware or AMD Software memory settings.
+any separately approved change to firmware or AMD Software memory settings.
+
+On macOS, use `system_profiler SPHardwareDataType SPDisplaysDataType`,
+`sysctl -n hw.memsize`, `vm_stat`, and `df -h`. On Linux, use `lscpu`,
+`lspci -nnk`, `free -h`, and `df -h`; inspect NPU driver/firmware support when
+that backend is requested. When already available, use `nvidia-smi` for
+NVIDIA GPU/driver/free VRAM or `amd-smi` for AMD runtime/device information.
+Do not install GPU tooling just to complete inventory; report missing evidence.
+
+Inventory app bundles, package records, existing `unsloth` command paths, and
+any Studio/Core environments before installation. A CLI's presence alone
+does not establish Desktop ownership. On macOS check `brew list --cask
+--versions unsloth`, `/Applications/Unsloth.app`, and user Applications; on
+Linux check the distro package database and any existing AppImage or cask.
+Record app version and setup status from the installed Desktop UI.
+
+| Hardware/path | Local inference guidance |
+|---|---|
+| CPU only | Start with a small GGUF supported by the app; expect slower generation. CPU chat support is not proof of training support. |
+| NVIDIA GPU | Check the exact GPU and driver against current Unsloth requirements; use the app-supported GPU backend and verify actual offload. Do not assume a displayed CUDA version proves a compatible installed toolkit. |
+| AMD GPU | Check the exact GPU, OS and runtime against Unsloth/AMD support; use only a backend offered by the app for that device. Prior Lemonade ROCm support does not prove Unsloth compatibility. |
+| Apple Silicon | The current Mac download/cask targets Apple Silicon. Use supported MLX models or GGUF/Metal and budget shared memory once, not as separate RAM plus VRAM. |
+| Intel GPU/Intel Mac | Verify a supported Desktop asset and backend for the exact device. Do not assume the Apple Silicon cask runs on Intel Macs, or substitute Core/Studio silently. |
+| AMD XDNA 2 NPU | The official NPU guide covers supported Ryzen AI 300/Max/400 PCs on Windows 11 or Linux x64. Use FastFlowLM-compatible Q4NX models from the NPU picker, not arbitrary GGUF/MLX files. |
+
+For the NPU path, recheck the [official NPU prerequisites](https://unsloth.ai/docs/get-started/install/amd/amd-npu)
+including drivers, firmware, Linux kernel/`amdxdna` and memlock requirements.
+**Enable NPU** downloads FastFlowLM and checks drivers; obtain approval before
+this one-time runtime setup. Report unmet prerequisites instead of changing
+kernel, drivers or security/resource policy automatically. NPU inference does
+not imply NPU fine-tuning support.
 
 ### Install or upgrade the official package
 
-Use the official `AMD.LemonadeServer` Winget package. Inspect its publisher and
-source before installation; do not use an arbitrary public mirror or manually
-replace backend binaries while Lemonade's backend manager works.
+Use one installation/update owner, not duplicate Winget, direct-installer,
+Homebrew, AppImage, or Python variants. An existing healthy Desktop installation
+counts even if the package manager does not recognize it. Do not downgrade a
+newer app just because the catalog lags its updater.
+
+#### Windows
+
+Inspect the live package before choosing install or upgrade:
 
 ```powershell
-winget show --exact --id AMD.LemonadeServer --source winget `
+winget list --exact --id UnslothAI.Unsloth --source winget `
   --accept-source-agreements
-
-$installed = winget list --exact --id AMD.LemonadeServer --source winget `
+winget show --exact --id UnslothAI.Unsloth --source winget `
   --accept-source-agreements
-if ($LASTEXITCODE -eq 0 -and
-    $installed -match 'AMD\.LemonadeServer') {
-  winget upgrade --exact --id AMD.LemonadeServer --source winget `
-    --accept-package-agreements --accept-source-agreements `
-    --disable-interactivity --silent
-}
-else {
-  winget install --exact --id AMD.LemonadeServer --source winget `
-    --accept-package-agreements --accept-source-agreements `
-    --disable-interactivity --silent
-}
 ```
 
-Open a fresh PowerShell session, start Lemonade Server from its installed app if
-it is not already running, and verify the CLI and local service:
+Confirm publisher **Unsloth AI**, official release URL, installer hash and
+architecture. A network/source error is not evidence the app is absent. Only
+after inventory confirms it is missing and installation is approved:
 
 ```powershell
-lemonade --version
-lemonade status
-lemonade config
-lemonade backends --all
+winget install --exact --id UnslothAI.Unsloth --source winget `
+  --accept-package-agreements --accept-source-agreements `
+  --disable-interactivity --silent
 ```
 
-The default server endpoint is `http://localhost:13305`. Preserve the user's
-telemetry preference: inspect it with `lemonade config` and never silently
-enable telemetry.
-
-### Configure stable ROCm and update the managed llama.cpp backend
-
-For a supported Ryzen AI iGPU, prefer the stable ROCm channel. Use Vulkan as the
-fallback if ROCm is unsupported or fails validation. Do not select the
-experimental nightly channel by default. While the server is connected, set
-the desired configuration before unloading the final model:
+For an existing Winget-owned installation, use upgrade instead:
 
 ```powershell
-lemonade config set rocm_channel=stable rocm_install_method=auto `
-  llamacpp.backend=rocm llamacpp.rocm_bin=latest `
-  inhibit_suspend=true max_loaded_models=1
-lemonade config
+winget upgrade --exact --id UnslothAI.Unsloth --source winget `
+  --accept-package-agreements --accept-source-agreements `
+  --disable-interactivity --silent
 ```
 
-`latest` deliberately resolves the current official stable llama.cpp build; do
-not hardcode a build such as `b11513` as permanently latest. Record the build
-that Lemonade actually resolves.
+Explain any elevation prompt first. If Winget is unavailable, download the
+matching installer from the [official Windows page](https://unsloth.ai/download/windows).
+Check Authenticode validity and publisher, and compare any published release
+checksum before running the saved file. Stop on an invalid signature/hash or
+blocked source; never bypass SmartScreen or application-control policy.
 
-Unload all models before replacing backend files, then reinstall only the
-Lemonade-managed ROCm backend:
+#### macOS
 
-```powershell
-lemonade unload
-lemonade backends uninstall llamacpp:rocm
-lemonade backends install llamacpp:rocm
+When Homebrew is already approved, inspect its current architecture constraints:
+
+```bash
+brew info --cask unsloth
+brew list --cask --versions unsloth
 ```
 
-Unloading the last model can briefly drop the server connection. This is why
-the configuration is written first. Wait for `lemonade status` to succeed,
-then verify and reapply the desired values if necessary:
+On a supported Mac, run only the appropriate operation:
 
-```powershell
-lemonade status
-lemonade config set rocm_channel=stable rocm_install_method=auto `
-  llamacpp.backend=rocm llamacpp.rocm_bin=latest `
-  inhibit_suspend=true max_loaded_models=1
-lemonade config
-lemonade backends --all
-
-$versionRoots = @(
-  "$env:USERPROFILE\.cache\lemonade\bin\llamacpp\rocm-stable",
-  "$env:USERPROFILE\.cache\lemonade\bin\therock"
-)
-Get-ChildItem $versionRoots -Filter version.txt -File -Recurse `
-  -ErrorAction SilentlyContinue |
-  Select-Object FullName,
-    @{Name='Version'; Expression={
-      (Get-Content -LiteralPath $_.FullName -Raw).Trim()
-    }}
+```bash
+brew install --cask unsloth
+# For an existing cask-owned installation, upgrade instead:
+brew upgrade --cask unsloth
 ```
 
-The backend listing and `version.txt` files should identify the resolved
-llama.cpp build and Lemonade-managed ROCm runtime. Confirm that the reported GPU
-architecture matches the inventory; for example, a Radeon 860M in a Ryzen AI 7
-PRO 350 system reports `gfx1152`.
+Alternatively use the official `.dmg` from the [Mac download page](https://unsloth.ai/download/mac)
+and drag Unsloth into Applications. Preserve code-signing/Gatekeeper checks;
+never remove quarantine attributes to force launch. If no matching Intel Mac
+asset exists, report Desktop unavailable for that device.
 
-### Choose the model recipe and context deliberately
+#### Linux
 
-Do not redirect NPU-specific models to ROCm:
+Use the current [official Linux download page](https://unsloth.ai/download/linux):
+it lists Ubuntu/Debian `.deb`, an AppImage, and an ARM64 `.deb`. Verify the
+release asset's architecture and distro requirements; do not assume the
+AppImage supports ARM64 or a `.deb` works on RPM-based distributions.
+Download over HTTPS, verify any published checksum/signature through the
+official release source, and inspect package metadata before installation.
 
-- GGUF models with the `llamacpp` recipe can use the ROCm backend.
-- Models with the `ryzenai-llm` or `flm` recipe use the XDNA2 NPU and should
-  remain on their NPU backend.
+On compatible Debian/Ubuntu, install or upgrade the reviewed local package
+through APT (replace the placeholder with its saved absolute path):
+
+```bash
+dpkg-deb --info /path/to/Unsloth-Desktop-Ubuntu.deb
+sudo apt-get install /path/to/Unsloth-Desktop-Ubuntu.deb
+```
+
+For other supported distributions use the official matching AppImage and its
+documented dependencies; make only that reviewed file executable and launch it
+as the normal user. Do not invent signed APT/RPM repositories, convert packages,
+install a second variant, or bypass sandbox/SELinux policy. Report unsupported
+platforms or blocked prerequisites.
+
+Desktop's **Settings -> General -> Check for updates** supports Windows/macOS
+and Linux AppImage updates. `.deb` updates require installing the newer official
+package over the existing one. Keep package-manager-owned copies on their
+owning update channel; preserve app data and do not use uninstall/zap to update.
+
+### First launch, model selection and context
+
+Launch Desktop from the installed app, confirm its actual version, and wait for
+first-run setup to finish. Review backend/dependency downloads and their disk
+requirements before authorizing them. Keep telemetry, startup, credentials,
+cloud providers, tools, filesystem permissions and existing client settings
+unchanged unless the user requests changes. A package record is not proof that
+runtime setup completed.
 
 Choose a context size from current OS-visible free memory, model size,
-quantization, runtime overhead, and the configured iGPU reservation. Start
-conservatively and increase only after a successful load and inference request;
-do not hardcode 8192 for every machine or model.
+quantization, KV cache, runtime overhead, free VRAM/shared memory and other
+applications. Leave OS headroom; model download size is not total runtime
+memory. Start with one small supported instruction/chat model and a short
+context (for example 2048 only if it fits), not a fixed large model or 8192+
+context for every device. Increase only after successful load and generation.
 
-```powershell
-$model = '<downloaded-GGUF-llamacpp-model-name>'
-$contextSize = <conservative-context-size-for-current-free-memory>
-lemonade load $model --llamacpp rocm --ctx-size $contextSize --save-options
-lemonade status
-```
+Prefer a compatible already-downloaded model. Ask before any model download,
+state its size/license/source, and select the appropriate GGUF, MLX or NPU
+format in **Model hub** / **Select model**. Do not automatically copy Lemonade
+cache files or choose a cloud endpoint as a success-shaped fallback.
 
-As a verified example rather than a guarantee, a 64 GB Ryzen AI 7 PRO 350
-system with 32 GB reserved for its Radeon 860M loaded the 17.2 GB
-`Qwen3.8-27B-GGUF` model through llama.cpp/ROCm at 8192 context and measured
-about 4.0 tokens/second, or 240 tokens/minute, on a long-output test. Different
-models, quantizations, context sizes, drivers, thermals, and memory reservations
-will produce different results.
+Record the actual model ID, quantization, backend/device, context and memory
+use. Confirm the app reports the intended accelerator during inference; report
+CPU fallback explicitly. Send a short text-only chat with tools/web search
+disabled. If a load fails, surface the error, lower context/offload or choose a
+smaller approved model; do not change drivers or memory policy to force success.
 
 ### Verify the local OpenAI-compatible API
 
-Keep the default `localhost` binding. The local smoke test needs no credentials
-when the server has no API key configured:
+Use the [official API guide](https://unsloth.ai/docs/basics/api). Keep loopback
+binding and discover the actual endpoint/port from the app; do not assume
+Lemonade's port or that every Desktop version exposes the same endpoints.
+Ensure the listener is only `127.0.0.1` / `::1` (Windows
+`Get-NetTCPConnection`, macOS `lsof -nP -iTCP -sTCP:LISTEN`, Linux `ss -ltnp`).
+Do not enable LAN, bind to all interfaces, create tunnels or firewall openings.
+
+Create a dedicated key interactively in **Settings -> API** when approved;
+it is shown only once. Store it in the user's approved secret store, never
+chat, screenshots, shell history, committed config or logs. Every request needs
+Bearer authentication. Do not assume the unauthenticated Lemonade test applies.
+
+The following PowerShell 7 smoke test works on all three platforms. Set the
+base URI to the app's actual loopback endpoint (without `/v1`) and the model ID
+to the intended loaded model. Enter the key only at the secure terminal prompt:
 
 ```powershell
-$baseUri = 'http://localhost:13305'
-$loadedModelName = '<loaded-model-name>'
-foreach ($prefix in @('/v1', '/api/v1')) {
-  $models = Invoke-RestMethod -Method Get -Uri "$baseUri$prefix/models"
-  $model = $models.data |
-    Where-Object id -eq $loadedModelName |
+$ErrorActionPreference = 'Stop'
+$baseUri = [uri](Read-Host 'Unsloth loopback base URI shown in the app')
+if ($baseUri.Scheme -notin @('http', 'https') -or
+    $baseUri.Host -notin @('localhost', '127.0.0.1', '[::1]', '::1') -or
+    $baseUri.UserInfo -or $baseUri.AbsolutePath -ne '/' -or
+    $baseUri.Query -or $baseUri.Fragment) {
+  throw 'Use only the actual loopback base URI without credentials or a path.'
+}
+$loadedModelName = Read-Host 'Exact loaded model ID'
+$secret = Read-Host 'Unsloth API key' -AsSecureString
+$headers = @{
+  Authorization = 'Bearer ' + ([System.Net.NetworkCredential]::new('', $secret).Password)
+}
+try {
+  $base = $baseUri.AbsoluteUri.TrimEnd('/')
+  $models = Invoke-RestMethod -Uri "$base/v1/models" -Headers $headers `
+    -TimeoutSec 30 -MaximumRedirection 0
+  $model = $models.data | Where-Object id -eq $loadedModelName |
     Select-Object -First 1
-  if (-not $model) {
-    throw "The expected loaded model was not returned by $prefix/models."
+  if (-not $model -or $model.loaded -eq $false) {
+    throw 'The intended model is absent or reported as not loaded.'
   }
 
   $body = @{
     model = $model.id
     messages = @(
-      @{ role = 'user'; content = 'Reply with exactly: lemonade-ok' }
+      @{ role = 'user'; content = 'Reply with exactly: unsloth-ok' }
     )
     stream = $false
     max_tokens = 128
+    enable_tools = $false
   } | ConvertTo-Json -Depth 5
 
   $response = Invoke-RestMethod -Method Post `
-    -Uri "$baseUri$prefix/chat/completions" `
-    -ContentType 'application/json' -Body $body
-  [pscustomobject]@{
-    Prefix = $prefix
-    Content = $response.choices[0].message.content
+    -Uri "$base/v1/chat/completions" -Headers $headers `
+    -ContentType 'application/json' -Body $body `
+    -TimeoutSec 180 -MaximumRedirection 0
+  $content = [string]$response.choices[0].message.content
+  if ($content.Trim() -ne 'unsloth-ok' -or
+      $response.choices[0].finish_reason -eq 'length') {
+    throw 'Inference did not complete the expected unsloth-ok reply.'
   }
+  [pscustomobject]@{
+    Model = $model.id
+    Content = $content
+  }
+}
+finally {
+  $headers.Clear()
+  $secret.Dispose()
+  Remove-Variable headers, secret
 }
 ```
 
-Do not expose port `13305` broadly or change the host to all interfaces without
-explicit consent and an API key, host firewall rules, and appropriate network
-access controls.
+Inspect the returned text: a model listing or HTTP 200 alone is not inference
+verification. A reasoning-only/token-exhausted reply is incomplete; use a small
+approved non-reasoning model or its documented reasoning settings and retry.
+Report authentication, endpoint, loading and generation errors separately.
+Do not log request headers or create persistent client/provider changes just
+to test the API. If API support is unavailable, report installed/UI-operational
+but API-unverified rather than installing Studio silently.
 
-For optional repeatable measurements, use the built-in benchmark command and
-save JSON output:
+### Optional fine-tuning, not a default prerequisite
 
-```powershell
-lemonade bench $loadedModelName --backend rocm --ctx-size $contextSize `
-  --runs 3 --warmup 1 --json --output .\lemonade-benchmark.json
-```
+Only prepare training when requested. Verify the exact GPU, OS, driver, Python,
+PyTorch and CUDA/ROCm/MLX/Intel runtime combination against the current
+[requirements](https://unsloth.ai/docs/get-started/fine-tuning-for-beginners/unsloth-requirements),
+[AMD guide](https://unsloth.ai/docs/get-started/install/amd),
+[Intel guide](https://unsloth.ai/docs/get-started/install/intel), and platform
+guide. Desktop inference support does not prove training support.
 
-Run benchmarks on AC power and use the user's approved performance mode to
-reduce power and thermal variability. Do not permanently change the Windows
-power plan without consent. Convert reported generation throughput with
-`tokens/minute = tokens/second * 60`.
+For separately requested Core/Studio environments, use an isolated compatible
+Python (current general training guidance is 3.11-3.13, not 3.14); preserve the
+developer Python installations. Use vendor-specific dependency instructions,
+not generic CUDA wheels on AMD. Validate accelerator operations and imports
+before an approved small training run; inference memory budgets are not
+training budgets. Do not download datasets/models or train automatically.
 
-Before applying this procedure, verify current support and syntax against the
-official [Lemonade documentation](https://lemonade-server.ai/docs/), the
-[official source repository](https://github.com/lemonade-sdk/lemonade), and the
-live `lemonade --help` output.
+Before executing this section, recheck the [Desktop documentation](https://unsloth.ai/docs/desktop),
+[Windows](https://unsloth.ai/docs/get-started/install/windows-installation),
+[macOS](https://unsloth.ai/docs/get-started/install/mac),
+[Linux](https://unsloth.ai/docs/get-started/install/linux), and
+[update guide](https://unsloth.ai/docs/get-started/install/updating).
 
 ## 13. Install Docker
 
@@ -1518,13 +1606,20 @@ docker info
 docker run --rm hello-world
 ```
 
+For Unsloth on every supported platform, repeat section 12's package/app
+version and backend checks, a successful local UI chat, and the authenticated
+loopback `/v1/models` plus `/v1/chat/completions` smoke test. Record model ID,
+quantization, context, device and actual generated text without exposing keys.
+If installation, model download or API-key creation was not authorized, report
+that stage as deferred, not operational. Leave existing Lemonade untouched.
+
 ### Windows additions
 
 ```powershell
 py --list-paths
 wt --version
 winget list --exact --id Microsoft.PowerBI --source winget --accept-source-agreements
-winget list --exact --id AMD.LemonadeServer --source winget --accept-source-agreements
+winget list --exact --id UnslothAI.Unsloth --source winget --accept-source-agreements
 $collaborationWingetIds = @(
   'Discord.Discord',
   'SlackTechnologies.Slack',
@@ -1563,10 +1658,6 @@ $collaborationWin32Executables |
   Select-Object FullName,
     @{Name='ProductVersion'; Expression={$_.VersionInfo.ProductVersion}},
     @{Name='FileVersion'; Expression={$_.VersionInfo.FileVersion}}
-lemonade --version
-lemonade status
-lemonade config
-lemonade backends --all
 $powerBIExe = @(
   "$env:ProgramFiles\Microsoft Power BI Desktop\bin\PBIDesktop.exe",
   "${env:ProgramFiles(x86)}\Microsoft Power BI Desktop\bin\PBIDesktop.exe"
@@ -1599,9 +1690,9 @@ clang --version
 system_profiler SPSoftwareDataType
 ```
 
-Do not run the Windows Ryzen AI/ROCm Lemonade optimization procedure on macOS.
-If Lemonade is requested, follow its current official macOS guidance and use
-the supported Metal backend.
+Verify Unsloth's installed app version and owning update channel. For a
+cask-owned copy use `brew list --cask --versions unsloth`; confirm the supported
+MLX/Metal or CPU backend rather than running Windows GPU commands.
 
 ### Linux additions
 
@@ -1613,9 +1704,9 @@ systemctl is-active docker
 id
 ```
 
-Do not run the Windows Ryzen AI/ROCm Lemonade optimization procedure on Linux.
-If Lemonade is requested, follow its current official Linux and ROCm guidance
-for the exact distribution and supported hardware.
+Verify Unsloth's installed app version and owning package/AppImage channel,
+the exact architecture, and supported runtime/device. Do not run Windows GPU
+commands or treat a missing distro package as permission to install a duplicate.
 
 Report exact installed versions, package sources, policy restrictions, reboot
 or re-login requirements, and interactive first-run steps. Distinguish

@@ -87,13 +87,19 @@ Sets up or repairs a Windows, macOS, or Linux developer machine with:
 - Discord, Slack, and Microsoft Teams on Windows with duplicate-safe
   Winget/Store inventory and ownership-aware updates
 - Microsoft Power BI Desktop on Windows
-- AMD Lemonade Server with stable ROCm and the latest supported llama.cpp build
-  for local LLM serving on compatible Windows Ryzen AI hardware
+- Official Unsloth Desktop for local models on supported Windows, macOS, and
+  Linux hardware, with ownership-aware updates, conservative memory/context
+  selection, and authenticated loopback API inference verification
 - Official Windows 11 compact Explorer context-menu integration, Visual Studio
   Build Tools, Windows Terminal, Hyper-V, WSL 2, and Ubuntu LTS on Windows
 
 The workflow preserves existing credentials, respects enterprise security
 policy, explains elevation prompts, and verifies each installation.
+Unsloth Desktop is currently beta; disclose that before installation rather
+than calling it stable. Desktop is distinct from the Studio web UI and Core
+Python training library; fine-tuning is optional and hardware-dependent.
+Existing Lemonade installations, models, caches, and provider settings remain
+untouched. Updating this skill does not install a runtime or download models.
 
 ## Install
 
